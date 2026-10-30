@@ -1,0 +1,701 @@
+// units: reading units and values from text. A unit can be one name
+// ("kN", "kilometres", "°F") or several joined by · * / and powers
+// ("kN·m", "m^3/s", "kg m**-3", "W/(m·K)"). A value can be a number with a
+// unit ("3 ft"), a length in two units ("5'6\"", "5 ft 6 in"), a sum
+// ("1 m + 50 mm"), or a calculation with functions ("sqrt(16 m²)").
+//
+// Author: Alexius Academia
+// Date: 2026-10-30
+
+// A piece of the text.
+struct Token {
+    kind: Int
+    text: String = ""
+    value: Float = 0.0
+    // Whether there was a space before it.
+    spaced: Bool = false
+}
+
+let tokNumber = 0
+let tokName = 1
+let tokOp = 2
+let tokPower = 3
+let tokEnd = 4
+
+// A value while it's worked out: in SI, with its dimension. `bare` is a
+// plain number with no unit anywhere in it. `absolute` is a temperature in
+// °C or °F, or a level in dB: it can't take part in a sum or a product.
+struct Amount {
+    v: Float
+    dims: [Float] = zeroDims()
+    bare: Bool = false
+    absolute: Bool = false
+}
+
+let functionNames: Set<String> = ["sqrt", "abs", "sin", "cos", "tan", "asin", "acos", "atan", "ln", "log", "exp", "round"]
+
+fn isDigit(_ ch: String) -> Bool {
+    ch >= "0" && ch <= "9"
+}
+
+// Whether a character can be part of a unit's name (but not start one, if
+// it's a digit).
+fn isNameChar(_ ch: String) -> Bool {
+    if ch == "'" || ch == "\"" {
+        return false
+    }
+    isPlainNameChar(ch) || reg.nameChars.contains(ch)
+}
+
+// A superscript digit's value (² is 2), or nil.
+fn superscript(_ ch: String) -> Int? {
+    let digits = ["⁰", "¹", "²", "³", "⁴", "⁵", "⁶", "⁷", "⁸", "⁹"]
+    digits.index(of: ch)
+}
+
+// Splits text into tokens; the second value says what's wrong, if anything.
+fn tokenize(_ text: String) -> ([Token], String) {
+    let chars = text.characters
+    var out: [Token] = []
+    var i = 0
+    var spaced = false
+    while i < chars.count {
+        let ch = chars[i]
+        if ch == " " || ch == "\t" {
+            spaced = true
+            i += 1
+            continue
+        }
+        if isDigit(ch) || (ch == "." && i + 1 < chars.count && isDigit(chars[i + 1])) {
+            var s = ""
+            while i < chars.count && (isDigit(chars[i]) || chars[i] == ".") {
+                s += chars[i]
+                i += 1
+            }
+            // An exponent: 1e3, 2.5E-4.
+            if i < chars.count && (chars[i] == "e" || chars[i] == "E") {
+                var k = i + 1
+                if k < chars.count && (chars[k] == "-" || chars[k] == "+") {
+                    k += 1
+                }
+                if k < chars.count && isDigit(chars[k]) {
+                    s += "e"
+                    if chars[i + 1] == "-" {
+                        s += "-"
+                    }
+                    i = k
+                    while i < chars.count && isDigit(chars[i]) {
+                        s += chars[i]
+                        i += 1
+                    }
+                }
+            }
+            if let x = Float(s) {
+                out.append(Token(kind: tokNumber, text: s, value: x, spaced: spaced))
+            } else {
+                return (out, "\"{s}\" isn't a number")
+            }
+        } else if ch == "'" || ch == "\"" {
+            out.append(Token(kind: tokName, text: ch, spaced: spaced))
+            i += 1
+        } else if isNameChar(ch) {
+            var s = ""
+            while i < chars.count && isNameChar(chars[i]) {
+                s += chars[i]
+                i += 1
+            }
+            // "m2", "ft3": a power written straight after a unit, when the
+            // whole isn't a unit's name of its own (like "g0" or "H2O").
+            let (whole, _) = findUnit(s)
+            var digits = ""
+            var stem = s
+            while !stem.isEmpty && isDigit(stem.character(at: stem.count - 1) ?? "") {
+                digits = (stem.character(at: stem.count - 1) ?? "") + digits
+                stem = stem.substring(from: 0, to: stem.count - 1)
+            }
+            let (part, _) = findUnit(stem)
+            if whole == nil && !digits.isEmpty && !stem.isEmpty && part != nil {
+                out.append(Token(kind: tokName, text: stem, spaced: spaced))
+                out.append(Token(kind: tokPower, text: digits, value: Float(digits) ?? 1.0))
+            } else {
+                out.append(Token(kind: tokName, text: s, spaced: spaced))
+            }
+        } else if let d = superscript(ch) {
+            var n = d
+            i += 1
+            while i < chars.count {
+                if let more = superscript(chars[i]) {
+                    n = n * 10 + more
+                    i += 1
+                } else {
+                    break
+                }
+            }
+            out.append(Token(kind: tokPower, value: Float(n), spaced: spaced))
+        } else if ch == "⁻" && i + 1 < chars.count && superscript(chars[i + 1]) != nil {
+            var n = 0
+            i += 1
+            while i < chars.count {
+                if let more = superscript(chars[i]) {
+                    n = n * 10 + more
+                    i += 1
+                } else {
+                    break
+                }
+            }
+            out.append(Token(kind: tokPower, value: Float(-n), spaced: spaced))
+        } else if ch == "*" && i + 1 < chars.count && chars[i + 1] == "*" {
+            out.append(Token(kind: tokOp, text: "^", spaced: spaced))
+            i += 2
+        } else {
+            let op = match ch {
+                "−" -> "-"
+                "×", "·", "⋅", "∙" -> "*"
+                "÷" -> "/"
+                _ -> ch
+            }
+            if !["+", "-", "*", "/", "^", "(", ")"].contains(op) {
+                return (out, "\"{ch}\" can't be used here")
+            }
+            out.append(Token(kind: tokOp, text: op, spaced: spaced))
+            i += 1
+        }
+        spaced = false
+    }
+    out.append(Token(kind: tokEnd))
+    (out, "")
+}
+
+// Reads tokens into a value. `field` is the unit plain numbers are in.
+// With `unitOnly`, a temperature unit is a difference wherever it is (as in
+// a unit like W/(m·°C)), and a log unit can't be used.
+struct Calc {
+    tokens: [Token]
+    field: Unit = Unit()
+    unitOnly: Bool = false
+    at: Int = 0
+    problem: String = ""
+
+    fn peek() -> Token {
+        tokens[at]
+    }
+
+    fn peekAt(_ k: Int) -> Token {
+        if at + k < tokens.count { tokens[at + k] } else { tokens[tokens.count - 1] }
+    }
+
+    fn isOp(_ t: Token, _ op: String) -> Bool {
+        t.kind == tokOp && t.text == op
+    }
+
+    fn fail(_ message: String) -> Amount {
+        if problem.isEmpty {
+            problem = message
+        }
+        Amount(v: 0.0, bare: true)
+    }
+
+    fn failUnit(_ message: String) -> Unit {
+        if problem.isEmpty {
+            problem = message
+        }
+        Unit()
+    }
+
+    // Whether token t is the name of a unit (and not a function's name
+    // followed by "(").
+    fn isUnit(_ t: Token) -> Bool {
+        if t.kind != tokName {
+            return false
+        }
+        let (u, _) = findUnit(t.text)
+        u != nil
+    }
+
+    // A number after "^": 2, -1, 0.5, (-2), (1/2).
+    fn exponent() -> Float? {
+        var sign = 1.0
+        var k = 0
+        if isOp(peekAt(0), "-") {
+            sign = -1.0
+            k = 1
+        } else if isOp(peekAt(0), "+") {
+            k = 1
+        }
+        let n = peekAt(k)
+        if n.kind == tokNumber {
+            at += k + 1
+            return sign * n.value
+        }
+        if isOp(n, "(") {
+            at += k
+            let save = at
+            let e = power()
+            if e.dims != zeroDims() {
+                at = save
+                return nil
+            }
+            return sign * e.v
+        }
+        nil
+    }
+
+    // One unit with its power: "m", "m^2", "m**2", "m2", "m²".
+    fn unitFactor() -> Unit {
+        let t = peek()
+        at += 1
+        let (found, why) = findUnit(t.text)
+        guardFound(found, why)
+        let base = found ?? Unit()
+        var p = 1.0
+        let next = peek()
+        if next.kind == tokPower {
+            p = next.value
+            at += 1
+        } else if isOp(next, "^") {
+            at += 1
+            if let e = exponent() {
+                p = e
+            } else {
+                return failUnit("a unit's power must be a number")
+            }
+        }
+        if p == 1.0 {
+            return base
+        }
+        if base.isLog() {
+            return failUnit("\"{t.text}\" can't have a power")
+        }
+        // A temperature with a power is a difference: K², not °C².
+        Unit(factor: pow(base.factor, p), dims: base.dims.map { d in d * p }, text: t.text)
+    }
+
+    fn guardFound(_ u: Unit?, _ why: String) {
+        if u == nil && problem.isEmpty {
+            problem = why
+        }
+    }
+
+    // A unit written after a number: factors joined by * · / or a space.
+    fn unitSuffix() -> Unit {
+        let first = unitFactor()
+        var factor = first.factor
+        var dims = first.dims
+        var parts = 1
+        var log = first.isLog()
+        while true {
+            let t = peek()
+            var divide = false
+            if (isOp(t, "*") || isOp(t, "/")) && isUnit(peekAt(1)) {
+                divide = isOp(t, "/")
+                at += 1
+            } else if !isUnit(t) {
+                break
+            }
+            let u = unitFactor()
+            if u.isLog() {
+                log = true
+            }
+            factor = if divide { factor / u.factor } else { factor * u.factor }
+            for k in 0..dimCount {
+                dims[k] = if divide { dims[k] - u.dims[k] } else { dims[k] + u.dims[k] }
+            }
+            parts += 1
+        }
+        if parts == 1 {
+            return first
+        }
+        if log {
+            return failUnit("a log unit like dB can't be combined with others")
+        }
+        // A temperature among other units is a difference: W/(m·°C) is W/(m·K).
+        Unit(factor: factor, dims: dims)
+    }
+
+    // x in unit u.
+    fn withUnit(_ x: Float, _ u: Unit) -> Amount {
+        if u.isLog() {
+            if unitOnly {
+                return fail("a log unit like dB can't be combined with others")
+            }
+            return Amount(v: u.toSI(x), dims: u.dims, absolute: true)
+        }
+        if u.isOffset() && !unitOnly {
+            return Amount(v: u.toSI(x), dims: u.dims, absolute: true)
+        }
+        Amount(v: x * u.factor, dims: u.dims)
+    }
+
+    fn expression() -> Amount {
+        var q = term()
+        while isOp(peek(), "+") || isOp(peek(), "-") {
+            let minus = isOp(peek(), "-")
+            at += 1
+            var r = term()
+            if minus {
+                r.v = -r.v
+            }
+            q = add(q, r)
+        }
+        q
+    }
+
+    // a + b, with a plain number taking the field's unit next to one that
+    // has the field's dimension.
+    fn add(_ a0: Amount, _ b0: Amount) -> Amount {
+        var a = a0
+        var b = b0
+        if a.absolute || b.absolute {
+            return fail("a temperature in °C or °F, or a level in dB, can't be added to; type it on its own")
+        }
+        if a.dims != b.dims {
+            if a.bare && b.dims == field.dims {
+                a = Amount(v: a.v * field.factor, dims: field.dims)
+            } else if b.bare && a.dims == field.dims {
+                b = Amount(v: b.v * field.factor, dims: field.dims)
+            } else {
+                return fail("can't add {describeDims(a.dims)} and {describeDims(b.dims)}")
+            }
+        }
+        Amount(v: a.v + b.v, dims: a.dims, bare: a.bare && b.bare)
+    }
+
+    fn term() -> Amount {
+        var q = unary()
+        while isOp(peek(), "*") || isOp(peek(), "/") || (unitOnly && isUnit(peek())) {
+            var divide = false
+            if !isUnit(peek()) {
+                divide = isOp(peek(), "/")
+                at += 1
+            }
+            let r = unary()
+            if q.absolute || r.absolute {
+                return fail("a temperature in °C or °F, or a level in dB, can't be multiplied; type it on its own")
+            }
+            var dims = q.dims
+            for k in 0..dimCount {
+                dims[k] = if divide { dims[k] - r.dims[k] } else { dims[k] + r.dims[k] }
+            }
+            if divide && r.v == 0.0 {
+                return fail("division by zero")
+            }
+            q = Amount(v: if divide { q.v / r.v } else { q.v * r.v }, dims: dims, bare: q.bare && r.bare)
+        }
+        q
+    }
+
+    fn unary() -> Amount {
+        if isOp(peek(), "-") {
+            at += 1
+            // "-3.5 °C", "-10 dBm", "-3 ft 6 in": the number is negative,
+            // before its unit's zero or scale comes in.
+            if numberBeforeUnit() != nil {
+                return power(negative: true)
+            }
+            var q = unary()
+            q.v = -q.v
+            return q
+        }
+        if isOp(peek(), "+") {
+            at += 1
+            return unary()
+        }
+        power()
+    }
+
+    fn power(negative: Bool = false) -> Amount {
+        let q = primary(negative: negative)
+        var p = 0.0
+        var has = false
+        if peek().kind == tokPower {
+            p = peek().value
+            has = true
+            at += 1
+        } else if isOp(peek(), "^") {
+            at += 1
+            let e = unary()
+            if e.dims != zeroDims() {
+                return fail("a power can't have a unit")
+            }
+            p = e.v
+            has = true
+        }
+        if !has {
+            return q
+        }
+        if q.absolute {
+            return fail("a temperature in °C or °F, or a level in dB, can't be raised to a power")
+        }
+        Amount(v: pow(q.v, p), dims: q.dims.map { d in d * p }, bare: q.bare)
+    }
+
+    fn primary(negative: Bool = false) -> Amount {
+        let t = peek()
+        let sign = if negative { -1.0 } else { 1.0 }
+        if t.kind == tokNumber {
+            // A number with a unit: "3 ft", "1/4 in", "6 1/4 in".
+            if let (x, n) = numberBeforeUnit() {
+                at += n
+                var q = withUnit(sign * x, unitSuffix())
+                // 5'6", 5 ft 6 in, 5' 6 1/4": one length written in two units.
+                while numberBeforeUnit() != nil {
+                    let (more0, m) = numberBeforeUnit() ?? (0.0, 1)
+                    let more = sign * more0
+                    at += m
+                    let r = withUnit(more, unitSuffix())
+                    if r.dims != q.dims || r.absolute || q.absolute {
+                        return fail("\"{t.text}\" and \"{more0}\" need an operator between them")
+                    }
+                    q.v += r.v
+                }
+                return q
+            }
+            at += 1
+            if peek().kind == tokName && !isFunction(peek()) {
+                let (_, why) = findUnit(peek().text)
+                return fail(why)
+            }
+            return Amount(v: t.value, bare: true)
+        }
+        if isOp(t, "(") {
+            at += 1
+            let q = expression()
+            if !isOp(peek(), ")") {
+                return fail("a ( isn't closed")
+            }
+            at += 1
+            if !unitOnly && isUnit(peek()) {
+                let u = unitSuffix()
+                if u.isOffset() || u.isLog() {
+                    return withUnit(q.v, u)
+                }
+                var dims = q.dims
+                for k in 0..dimCount {
+                    dims[k] += u.dims[k]
+                }
+                return Amount(v: q.v * u.factor, dims: dims)
+            }
+            return q
+        }
+        if t.kind == tokName {
+            if isFunction(t) {
+                at += 2
+                let arg = expression()
+                if !isOp(peek(), ")") {
+                    return fail("a ( isn't closed")
+                }
+                at += 1
+                return call(t.text, arg)
+            }
+            if isUnit(t) {
+                // A unit on its own is one of it: "kN/m" is 1 kN/m.
+                if unitOnly {
+                    let u = unitFactor()
+                    if u.isLog() {
+                        return fail("a log unit like dB can't be combined with others")
+                    }
+                    return Amount(v: u.factor, dims: u.dims)
+                }
+                return withUnit(1.0, unitSuffix())
+            }
+            let (_, why) = findUnit(t.text)
+            return fail(why)
+        }
+        if t.kind == tokEnd {
+            return fail("a number is missing at the end")
+        }
+        fail("\"{t.text}\" can't be here")
+    }
+
+    fn isWhole(_ t: Token) -> Bool {
+        t.kind == tokNumber && !t.text.contains(".") && !t.text.contains("e")
+    }
+
+    // A number that a unit follows, and how many tokens it takes: "3" in
+    // "3 ft" (1), "1/4" in "1/4 in" (3), "6 1/4" in "6 1/4 in" (4). nil when
+    // no unit follows.
+    fn numberBeforeUnit() -> (Float, Int)? {
+        let t = peekAt(0)
+        if t.kind != tokNumber {
+            return nil
+        }
+        let next = peekAt(1)
+        if next.kind == tokName && !isFunctionAt(1) && isUnit(next) {
+            return (t.value, 1)
+        }
+        // 1/4 in: a fraction of the unit, as pint reads it.
+        if isOp(next, "/") && peekAt(2).kind == tokNumber && isUnit(peekAt(3)) && !isFunctionAt(3) && peekAt(2).value != 0.0 {
+            return (t.value / peekAt(2).value, 3)
+        }
+        // 6 1/4 in: a whole number and a fraction.
+        if isWhole(t) && isWhole(next) && isOp(peekAt(2), "/") && isWhole(peekAt(3)) && isUnit(peekAt(4)) && !isFunctionAt(4) && peekAt(3).value != 0.0 {
+            return (t.value + next.value / peekAt(3).value, 4)
+        }
+        nil
+    }
+
+    // Whether the token k ahead starts a function call.
+    fn isFunctionAt(_ k: Int) -> Bool {
+        let t = peekAt(k)
+        t.kind == tokName && functionNames.contains(t.text) && isOp(peekAt(k + 1), "(")
+    }
+
+    fn isFunction(_ t: Token) -> Bool {
+        t.kind == tokName && functionNames.contains(t.text) && isOp(peekAt(1), "(")
+    }
+
+    fn call(_ name: String, _ q: Amount) -> Amount {
+        var angle = zeroDims()
+        angle[4] = 1.0
+        if q.absolute {
+            return fail("{name} can't take a temperature in °C or °F, or a level in dB")
+        }
+        if name == "sqrt" {
+            if q.v < 0.0 {
+                return fail("the square root of a negative number")
+            }
+            return Amount(v: sqrt(q.v), dims: q.dims.map { d in d / 2.0 }, bare: q.bare)
+        }
+        if name == "abs" {
+            return Amount(v: abs(q.v), dims: q.dims, bare: q.bare)
+        }
+        if name == "round" {
+            return Amount(v: round(q.v), dims: q.dims, bare: q.bare)
+        }
+        if name == "sin" || name == "cos" || name == "tan" {
+            // A plain number is in degrees, as in CAD programs.
+            var r = q.v
+            if q.dims == zeroDims() {
+                r = q.v * pi / 180.0
+            } else if q.dims != angle {
+                return fail("{name} needs an angle")
+            }
+            let v = if name == "sin" { sin(r) } else if name == "cos" { cos(r) } else { tan(r) }
+            return Amount(v: v, bare: true)
+        }
+        if q.dims != zeroDims() {
+            return fail("{name} needs a plain number")
+        }
+        if name == "asin" || name == "acos" || name == "atan" {
+            if name != "atan" && (q.v < -1.0 || q.v > 1.0) {
+                return fail("{name} needs a number from -1 to 1")
+            }
+            let v = if name == "asin" { asin(q.v) } else if name == "acos" { acos(q.v) } else { atan(q.v) }
+            return Amount(v: v, dims: angle)
+        }
+        if name == "ln" || name == "log" {
+            if q.v <= 0.0 {
+                return fail("{name} needs a number above 0")
+            }
+            return Amount(v: if name == "ln" { log(q.v) } else { log10(q.v) }, bare: true)
+        }
+        Amount(v: exp(q.v), bare: true)
+    }
+}
+
+// unit(text)
+//   A unit from its text: one name ("kN", "kilometres", "°F", "dBm") or
+//   several joined by · * / spaces and powers ("kN·m", "m^3/s",
+//   "kg m**-3", "W/(m·K)"). A temperature unit among others is a
+//   difference (W/(m·°C) is W/(m·K)), as in pint. A failure says why.
+//
+//   let u = try units.unit("kN/m²")      // u.factor is 1000, u.dims is a pressure's
+public fn unit(_ text: String) -> Result<Unit> {
+    parseUnit(text)
+}
+
+fn parseUnit(_ text: String) -> Result<Unit> {
+    let trimmed = text.trim()
+    if trimmed.isEmpty || trimmed == "1" || trimmed == "dimensionless" {
+        return Result.ok(value: Unit(text: trimmed))
+    }
+    let (single, _) = findUnit(trimmed)
+    if let u = single {
+        return Result.ok(value: u)
+    }
+    let (tokens, problem) = tokenize(trimmed)
+    if !problem.isEmpty {
+        return Result.failure(error: Error(problem))
+    }
+    // One unit with a power, or prefixed and plural names: through unitFactor.
+    if tokens.count == 3 && tokens[0].kind == tokName && tokens[1].kind == tokPower {
+        var c = Calc(tokens: tokens, unitOnly: true)
+        var u = c.unitFactor()
+        if !c.problem.isEmpty {
+            return Result.failure(error: Error(c.problem))
+        }
+        u.text = trimmed
+        return Result.ok(value: u)
+    }
+    var c = Calc(tokens: tokens, unitOnly: true)
+    let q = c.expression()
+    if c.problem.isEmpty && c.peek().kind != tokEnd {
+        let t = c.peek()
+        c.problem = "\"{t.text}\" can't be here"
+    }
+    if !c.problem.isEmpty {
+        return Result.failure(error: Error(c.problem))
+    }
+    Result.ok(value: Unit(factor: q.v, dims: q.dims, text: trimmed))
+}
+
+// isUnit(text)
+//   Whether the text is a unit units knows.
+public fn isUnit(_ text: String) -> Bool {
+    parseUnit(text).isOk()
+}
+
+// Reads text into an amount, with `field` as the unit of plain numbers.
+fn readAmount(_ text: String, _ field: Unit) -> Result<Amount> {
+    if text.trim().isEmpty {
+        return Result.failure(error: Error("type a number"))
+    }
+    let (tokens, problem) = tokenize(text)
+    if !problem.isEmpty {
+        return Result.failure(error: Error(problem))
+    }
+    var c = Calc(tokens: tokens, field: field)
+    let q = c.expression()
+    if c.problem.isEmpty && c.peek().kind != tokEnd {
+        let t = c.peek()
+        c.problem = if t.kind == tokNumber { "an operator is missing before \"{t.text}\"" } else { "\"{t.text}\" can't be here" }
+    }
+    if !c.problem.isEmpty {
+        return Result.failure(error: Error(c.problem))
+    }
+    Result.ok(value: q)
+}
+
+// read(text, unit:)
+//   What's typed in a number field, as a number in `unit`: a number, a
+//   calculation like "2*3.5 + 1", or numbers with units ("3 ft", "12 kN/m",
+//   "5'6\"", "68 °F", "1 m + 50 mm") converted to `unit`. A plain number is
+//   in `unit`, also next to one with a unit ("1 m + 50" in mm is 1050).
+//   Functions: sqrt abs round sin cos tan (of degrees, or an angle with a
+//   unit) asin acos atan ln log exp, and pi. A failure says what's wrong.
+//
+//   let mm = try units.read("3 ft + 2 in", unit: "mm")     // 965.2
+public fn read(_ text: String, unit: String = "") -> Result<Float> {
+    let fieldText = unit
+    let field = try parseUnit(fieldText)
+    let q = try readAmount(text, field)
+    if q.bare {
+        return Result.ok(value: q.v)
+    }
+    if q.dims == zeroDims() && field.dims == zeroDims() {
+        // A ratio like 10 m / 2 m, or 50 %, in the field's unit.
+        return Result.ok(value: field.fromSI(q.v))
+    }
+    if q.dims == field.dims {
+        return Result.ok(value: field.fromSI(q.v))
+    }
+    var angle = zeroDims()
+    angle[4] = 1.0
+    if field.dims == zeroDims() && q.dims == angle && fieldText.trim().isEmpty {
+        return Result.ok(value: q.v)
+    }
+    if field.dims == zeroDims() && fieldText.trim().isEmpty {
+        return Result.failure(error: Error("type a plain number, not {describeDims(q.dims)}"))
+    }
+    Result.failure(error: Error("{fieldText.trim()} is {describeDims(field.dims)}, not {describeDims(q.dims)}"))
+}

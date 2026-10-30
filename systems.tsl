@@ -1,0 +1,126 @@
+// units: unit systems. A system is a list of the units an app shows
+// things in, one for each dimension: lengths in m, forces in kN, pressures
+// in kPa. Switching an app's whole display is switching its system.
+//
+// Author: Alexius Academia
+// Date: 2026-10-30
+
+// unitSystem:
+//   The units to show things in. For a dimension, the first unit in
+//   `units` that measures it wins, so put the one you want first (kN·m
+//   before kJ, if moments matter more than energies). Make your own, or
+//   start from system("SI kN-m") and change `units`.
+public struct UnitSystem {
+    name: String
+    units: [String]
+
+    // The unit this system shows a dimension in, or "" when it has none.
+    fn unitFor(_ dims: [Float]) -> String {
+        for u in units {
+            if let p = parseUnit(u).value() {
+                if p.dims == dims {
+                    return u
+                }
+            }
+        }
+        ""
+    }
+
+    // The unit this system shows what `unit` measures in: in "US",
+    // unitForUnit("kN") is "lbf". "" when it has none.
+    fn unitForUnit(_ unit: String) -> String {
+        if let u = parseUnit(unit).value() {
+            return unitFor(u.dims)
+        }
+        ""
+    }
+
+    // The unit for a named dimension ("pressure", "unit weight"), or "".
+    fn unitForDimension(_ name: String) -> String {
+        if let d = dimsFromName(name) {
+            return unitFor(d)
+        }
+        ""
+    }
+
+    // A value in `unit`, in this system's unit for it (and that unit's
+    // text). With no unit for it, the value stays as it is.
+    //   let (x, u) = us.convert(12.0, from: "kN")      // 2697.7, "lbf"
+    fn convert(_ x: Float, from: String) -> (Float, String) {
+        let target = unitForUnit(from)
+        if target.isEmpty {
+            return (x, from)
+        }
+        let v = units_convert(x, from, target)
+        (v, target)
+    }
+
+    // A quantity as text in this system's unit for it: "12.50 kN·m". With
+    // no unit for it, it's shown in SI base units.
+    fn show(_ q: Quantity, decimals: Int = 2, sig: Int = 0, trim: Bool = false) -> String {
+        let u = unitFor(q.dims)
+        if u.isEmpty {
+            return q.show(siUnit(q.dims), decimals: decimals, sig: sig, trim: trim)
+        }
+        q.show(u, decimals: decimals, sig: sig, trim: trim)
+    }
+
+    // A value in `unit` as text in this system's unit for it.
+    fn showValue(_ x: Float, _ unit: String, decimals: Int = 2, sig: Int = 0, trim: Bool = false) -> String {
+        let (v, u) = convert(x, from: unit)
+        format(v, u, decimals: decimals, sig: sig, trim: trim)
+    }
+}
+
+// convert() without its labels, for UnitSystem.convert (whose own name
+// hides it).
+fn units_convert(_ x: Float, _ from: String, _ to: String) -> Float {
+    convert(x, from: from, to: to).valueOr(x)
+}
+
+// What every system shows the same way.
+fn commonTail() -> [String] {
+    ["s", "Hz", "rad/s", "A", "V", "W", "Ω", "mol", "cd", "bit", "%"]
+}
+
+fn systemUnits(_ name: String) -> [String] {
+    match name {
+        "SI" -> ["m", "m²", "m³", "kg", "s", "°C", "rad", "N", "Pa", "N·m", "J", "W", "m/s", "m/s²", "kg/m³",
+                 "N/m³", "N/m", "m³/s", "m⁴", "Pa·s", "m²/s", "mm/h"]
+        "SI kN-m" -> ["m", "m²", "m³", "kg", "s", "°C", "deg", "kN", "kPa", "kN·m", "kJ", "kW", "m/s", "m/s²",
+                      "kg/m³", "kN/m³", "kN/m", "m³/s", "m⁴", "Pa·s", "m²/s", "mm/h"]
+        "SI kN-mm" -> ["mm", "mm²", "mm³", "kg", "s", "°C", "deg", "kN", "MPa", "kN·m", "kJ", "kW", "m/s",
+                       "m/s²", "kg/m³", "kN/m³", "N/mm", "L/s", "mm⁴", "Pa·s", "mm²/s", "mm/h"]
+        "US" -> ["ft", "ft²", "ft³", "lb", "s", "°F", "deg", "lbf", "psi", "lbf·ft", "BTU", "hp", "ft/s",
+                 "ft/s²", "lb/ft³", "pcf", "plf", "cfs", "in⁴", "lbf·s/ft²", "ft²/s", "in/h"]
+        "US kip-ft" -> ["ft", "ft²", "ft³", "lb", "s", "°F", "deg", "kip", "ksf", "kip·ft", "BTU", "hp", "ft/s",
+                        "ft/s²", "lb/ft³", "kcf", "klf", "cfs", "ft⁴", "lbf·s/ft²", "ft²/s", "in/h"]
+        "US kip-in" -> ["in", "in²", "in³", "lb", "s", "°F", "deg", "kip", "ksi", "kip·in", "BTU", "hp", "ft/s",
+                        "ft/s²", "lb/in³", "kip/in³", "kip/in", "cfs", "in⁴", "lbf·s/in²", "in²/s", "in/h"]
+        _ -> []
+    }
+}
+
+// systemNames()
+//   The systems units comes with: "SI" (m, N, Pa), "SI kN-m" (m, kN, kPa,
+//   kN·m), "SI kN-mm" (mm, kN, MPa), "US" (ft, lbf, psi), "US kip-ft"
+//   (ft, kip, ksf) and "US kip-in" (in, kip, ksi).
+public fn systemNames() -> [String] {
+    ["SI", "SI kN-m", "SI kN-mm", "US", "US kip-ft", "US kip-in"]
+}
+
+// system(name)
+//   One of the systems from systemNames(), or nil.
+//
+//   if let us = units.system("US kip-ft") {
+//       print(us.showValue(100.0, "kN·m"))   // 73.76 kip·ft
+//   }
+public fn system(_ name: String) -> UnitSystem? {
+    let list = systemUnits(name)
+    if list.isEmpty {
+        return nil
+    }
+    var all = list
+    all.appendAll(commonTail())
+    UnitSystem(name: name, units: all)
+}

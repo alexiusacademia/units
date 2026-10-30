@@ -1,0 +1,560 @@
+// units' tests. First the cases in cases.json, with the answers pint gives
+// (made by tools/oracle/oracle.py): names, compound units, conversions,
+// typed values and quantities. Then the rest by hand: feet and inches,
+// fractions, the field rules for plain numbers, messages, formatting,
+// dimensions and unit systems.
+// `tessel run tests` prints the failures and a count, and exits with 1 if
+// any check failed.
+//
+// Author: Alexius Academia
+// Date: 2026-10-30
+
+import ".."
+
+struct NameCase {
+    text: String
+    ok: Bool
+    factor: Float = 0.0
+    dims: [Float] = []
+    offset: Float = 0.0
+    logBase: Float = 0.0
+    logFactor: Float = 0.0
+}
+
+struct CompoundCase {
+    text: String
+    pint: String
+    factor: Float
+    dims: [Float]
+}
+
+struct ConvertCase {
+    x: Float
+    from: String
+    to: String
+    y: Float
+}
+
+struct ReadCase {
+    text: String
+    pint: String
+    unit: String
+    y: Float
+    dims: [Float]
+}
+
+struct QuantityCase {
+    op: String
+    x: Float
+    a: String
+    z: Float
+    b: String
+    p: Float
+    y: Float
+    dims: [Float]
+}
+
+struct Cases {
+    names: [NameCase]
+    compound: [CompoundCase]
+    convert: [ConvertCase]
+    read: [ReadCase]
+    quantity: [QuantityCase]
+}
+
+// The checks made and the ones that failed.
+struct Tally {
+    failures: Int = 0
+    checks: Int = 0
+
+    fn fail(_ what: String) {
+        failures += 1
+        if failures <= 60 {
+            print("FAIL {what}")
+        }
+    }
+
+    fn check(_ what: String, _ got: Float, _ want: Float, size: Float = 0.0) {
+        checks += 1
+        if !near(got, want, size: size) {
+            fail("{what}: got {got}, want {want}")
+        }
+    }
+
+    fn checkTrue(_ what: String, _ ok: Bool) {
+        checks += 1
+        if !ok {
+            fail(what)
+        }
+    }
+
+    fn checkText(_ what: String, _ got: String, _ want: String) {
+        checks += 1
+        if got != want {
+            fail("{what}: got \"{got}\", want \"{want}\"")
+        }
+    }
+
+    fn checkDims(_ what: String, _ got: [Float], _ want: [Float]) {
+        checks += 1
+        if got != want {
+            fail("{what}: dims {got.map { d in "{d}" }.joined(separator: ",")}, want {want.map { d in "{d}" }.joined(separator: ",")}")
+        }
+    }
+
+    // A read or conversion that should work, and its value.
+    fn checkOk(_ what: String, _ got: Result<Float>, _ want: Float, size: Float = 0.0) {
+        match got {
+            .ok(x) -> check(what, x, want, size: size)
+            .failure(e) -> {
+                checks += 1
+                fail("{what}: {e.message}")
+            }
+        }
+    }
+
+    // A read or conversion that should fail, with a message containing
+    // `words`.
+    fn checkFails(_ what: String, _ got: Result<Float>, _ words: String) {
+        checks += 1
+        match got {
+            .ok(x) -> fail("{what}: gave {x}, want a failure")
+            .failure(e) -> {
+                if !e.message.contains(words) {
+                    fail("{what}: message \"{e.message}\" doesn't say \"{words}\"")
+                }
+            }
+        }
+    }
+}
+
+// Whether a and b agree to about 1e-9 of their size (or of `size`).
+fn near(_ a: Float, _ b: Float, size: Float = 0.0) -> Bool {
+    if a == b {
+        return true
+    }
+    abs(a - b) <= 1e-9 * max(max(abs(a), abs(b)), size)
+}
+
+fn testCases(_ t: bind Tally) {
+    let text = readFile("tests/cases.json") ?? ""
+    let loaded: Cases? = fromJson(text)
+    if loaded == nil {
+        t.fail("tests/cases.json can't be read: run from the library's folder")
+        return
+    }
+    let cases = loaded ?? Cases(names: [], compound: [], convert: [], read: [], quantity: [])
+    for c in cases.names {
+        match units.unit(c.text) {
+            .ok(u) -> {
+                if !c.ok {
+                    t.fail("name \"{c.text}\": found, but pint doesn't know it")
+                } else {
+                    t.check("name \"{c.text}\" factor", u.factor, c.factor)
+                    t.checkDims("name \"{c.text}\"", u.dims, c.dims)
+                    t.check("name \"{c.text}\" offset", u.offset, c.offset)
+                    t.check("name \"{c.text}\" log base", u.logBase, c.logBase)
+                    t.check("name \"{c.text}\" log factor", u.logFactor, c.logFactor)
+                }
+            }
+            .failure(e) -> {
+                t.checks += 1
+                if c.ok {
+                    t.fail("name \"{c.text}\": {e.message}")
+                }
+            }
+        }
+    }
+    for c in cases.compound {
+        match units.unit(c.text) {
+            .ok(u) -> {
+                t.check("unit \"{c.text}\" factor", u.factor, c.factor)
+                t.checkDims("unit \"{c.text}\"", u.dims, c.dims)
+            }
+            .failure(e) -> {
+                t.checks += 1
+                t.fail("unit \"{c.text}\": {e.message}")
+            }
+        }
+    }
+    for c in cases.convert {
+        t.checkOk("{c.x} {c.from} in {c.to}", units.convert(c.x, from: c.from, to: c.to), c.y, size: 1e-12)
+    }
+    for c in cases.read {
+        if c.unit.isEmpty {
+            match units.readQuantity(c.text) {
+                .ok(q) -> {
+                    t.check("read \"{c.text}\"", q.value, c.y, size: 1e-12)
+                    t.checkDims("read \"{c.text}\"", q.dims, c.dims)
+                }
+                .failure(e) -> {
+                    t.checks += 1
+                    t.fail("read \"{c.text}\": {e.message}")
+                }
+            }
+        } else {
+            t.checkOk("read \"{c.text}\" in {c.unit}", units.read(c.text, unit: c.unit), c.y, size: 1e-12)
+        }
+    }
+    for c in cases.quantity {
+        let what = "{c.x} {c.a} {c.op} {c.z} {c.b} (p {c.p})"
+        let qa = units.quantity(c.x, c.a).value()
+        let qb = units.quantity(c.z, c.b).value()
+        if qa == nil || qb == nil {
+            t.checks += 1
+            t.fail("{what}: a unit isn't known")
+            continue
+        }
+        let a = qa ?? units.Quantity()
+        let b = qb ?? units.Quantity()
+        var r = units.Quantity()
+        if c.op == "times" {
+            r = a.times(b)
+        } else if c.op == "over" {
+            r = a.over(b)
+        } else if c.op == "power" {
+            r = a.power(c.p)
+        } else if c.op == "sqrt" {
+            r = a.squareRoot()
+        } else if c.op == "plus" {
+            r = a.plus(b).valueOr(units.Quantity(value: -1.0))
+        } else {
+            r = a.minus(b).valueOr(units.Quantity(value: -1.0))
+        }
+        t.check(what, r.value, c.y, size: 1e-30)
+        t.checkDims(what, r.dims, c.dims)
+    }
+}
+
+// A value read in a unit.
+fn r(_ text: String, _ unit: String) -> Result<Float> {
+    units.read(text, unit: unit)
+}
+
+fn testReading(_ t: bind Tally) {
+    // Feet and inches, and fractions of a unit.
+    t.checkOk("5'6\"", r("5'6\"", "in"), 66.0)
+    t.checkOk("5' 6\"", r("5' 6\"", "in"), 66.0)
+    t.checkOk("5 ft 6 in", r("5 ft 6 in", "in"), 66.0)
+    t.checkOk("5' 6 1/4\"", r("5' 6 1/4\"", "in"), 66.25)
+    t.checkOk("6 1/4 in", r("6 1/4 in", "in"), 6.25)
+    t.checkOk("1/4 in", r("1/4 in", "in"), 0.25)
+    t.checkOk("3/8\"", r("3/8\"", "mm"), 9.525)
+    t.checkOk("-3 ft 6 in", r("-3 ft 6 in", "ft"), -3.5)
+    t.checkOk("12\" in ft", r("12\"", "ft"), 1.0)
+    t.checkOk("2 ft - 1/2 in", r("2 ft - 1/2 in", "in"), 23.5)
+    t.checkOk("10 kN / 2 m", r("10 kN / 2 m", "kN/m"), 5.0)
+    t.checkOk("1/2 bare", r("1/2", "mm"), 0.5)
+    // Plain numbers are in the field's unit.
+    t.checkOk("1 m + 50", r("1 m + 50", "mm"), 1050.0)
+    t.checkOk("50 + 1 m", r("50 + 1 m", "mm"), 1050.0)
+    t.checkOk("2*3.5 + 1", r("2*3.5 + 1", "kN"), 8.0)
+    t.checkOk("plain", r("12.5", "ft"), 12.5)
+    t.checkOk("10 m / 2 m", r("10 m / 2 m", ""), 5.0)
+    t.checkOk("50 %", r("50 %", ""), 0.5)
+    t.checkOk("50% in %", r("50%", "%"), 50.0)
+    // Temperatures and levels.
+    t.checkOk("68 °F", r("68 °F", "°C"), 20.0)
+    t.checkOk("-40 °C", r("-40 °C", "°F"), -40.0)
+    t.checkOk("300 K in °C", r("300 K", "°C"), 26.85)
+    t.checkOk("20 °C in K", r("20 °C", "K"), 293.15)
+    t.checkOk("0 dBm", r("0 dBm", "mW"), 1.0)
+    t.checkOk("-10 dBm", r("-10 dBm", "mW"), 0.1)
+    // Functions.
+    t.checkOk("sqrt(16 m²)", r("sqrt(16 m²)", "m"), 4.0)
+    t.checkOk("asin(0.5)", r("asin(0.5)", "deg"), 30.0)
+    t.checkOk("sin(30)", r("sin(30)", ""), 0.5)
+    t.checkOk("cos(pi rad)", r("cos(pi rad)", ""), -1.0)
+    t.checkOk("2^10", r("2^10", ""), 1024.0)
+    t.checkOk("-2^2", r("-2^2", ""), -4.0)
+    t.checkOk("(2 + 3) m", r("(2 + 3) m", "mm"), 5000.0)
+    t.checkOk("1.5e3 mm", r("1.5e3 mm", "m"), 1.5)
+    t.checkOk("2.5E-4 m", r("2.5E-4 m", "µm"), 250.0)
+    t.checkOk("3ft", r("3ft", "in"), 36.0)
+    t.checkOk("12 kN × 2 m", r("12 kN × 2 m", "kN·m"), 24.0)
+    t.checkOk("12 kN·m ÷ 4 m", r("12 kN·m ÷ 4 m", "kN"), 3.0)
+    t.checkOk("6 − 2", r("6 − 2", ""), 4.0)
+    // What can't be read, and why.
+    t.checkFails("unknown unit", r("3 frobs", "m"), "isn't a unit")
+    t.checkFails("length + time", r("3 m + 2 s", "m"), "can't add a length and a time")
+    t.checkFails("°C + °C", r("20 °C + 5 °C", "°C"), "can't be added to")
+    t.checkFails("°C × 2", r("20 °C * 2", "°C"), "can't be multiplied")
+    t.checkFails("mass in a length field", r("3 kg", "mm"), "mm is a length, not a mass")
+    t.checkFails("a unit weight", r("3 kN/m³", "mm"), "mm is a length, not a unit weight")
+    t.checkFails("an area", r("3 m²", "mm"), "mm is a length, not an area")
+    t.checkFails("length in a plain field", r("3 m", ""), "type a plain number, not a length")
+    t.checkFails("empty", r("  ", "m"), "type a number")
+    t.checkFails("open (", r("(2 + 3", ""), "isn't closed")
+    t.checkFails("two numbers", r("2 3", ""), "operator is missing")
+    t.checkFails("bad character", r("2 # 3", ""), "can't be used here")
+    t.checkFails("sqrt of negative", r("sqrt(-4)", ""), "negative")
+    t.checkFails("asin range", r("asin(2)", ""), "from -1 to 1")
+    t.checkFails("sin of a length", r("sin(3 m)", ""), "needs an angle")
+    t.checkFails("unknown field unit", r("3", "frobs"), "isn't a unit")
+    t.checkFails("division by zero", r("1/0", ""), "division by zero")
+    t.checkFails("number missing", r("3 +", ""), "missing at the end")
+    // Quantities read from text.
+    match units.readQuantity("3 ft 6 in") {
+        .ok(q) -> {
+            t.check("readQuantity value", q.value, 1.0668)
+            t.checkText("readQuantity dimension", q.dimension(), "length")
+        }
+        .failure(e) -> t.fail("readQuantity: {e.message}")
+    }
+}
+
+fn testUnits(_ t: bind Tally) {
+    // Ways of writing the same unit.
+    for text in ["kN·m", "kN*m", "kN m", "kN×m", "kilonewton meter", "kN⋅m", "m·kN"] {
+        t.checkOk("{text}", units.factor(from: text, to: "N·m"), 1000.0)
+    }
+    for text in ["m^3/s", "m**3/s", "m³/s", "m3/s", "m³·s⁻¹", "m^3 s^-1", "m³ s**-1", "cms", "cumec"] {
+        t.checkOk("{text}", units.factor(from: text, to: "L/s"), 1000.0)
+    }
+    for text in ["W/(m·K)", "W/m/K", "W/(m*K)", "W m^-1 K^-1", "W/(m·°C)", "W/(m·delta_degC)"] {
+        t.checkOk("{text}", units.factor(from: text, to: "W/(m·K)"), 1.0)
+    }
+    t.checkOk("BTU/(h·ft·°F)", units.convert(1.0, from: "BTU/(h·ft·°F)", to: "W/(m·K)"), 1.7307349081364831)
+    t.checkOk("1/s", units.factor(from: "1/s", to: "Hz"), 1.0)
+    t.checkOk("s⁻¹", units.factor(from: "s⁻¹", to: "Hz"), 1.0)
+    t.checkOk("mm^4", units.factor(from: "mm^4", to: "m^4"), 1e-12)
+    t.checkOk("m^0.5", units.factor(from: "m^0.5", to: "mm^0.5"), sqrt(1000.0))
+    // Engineering units pint doesn't have.
+    t.checkOk("pcf", units.convert(120.0, from: "pcf", to: "kN/m³"), 18.85049566154955)
+    t.checkOk("ksf", units.convert(1.0, from: "ksf", to: "kPa"), 47.880258980335874)
+    t.checkOk("cfs", units.convert(1.0, from: "cfs", to: "L/s"), 28.31684659199999)
+    t.checkOk("MGD", units.convert(1.0, from: "MGD", to: "m³/s"), 0.043812636388888875)
+    t.checkOk("MCM", units.convert(1.0, from: "MCM", to: "acre_foot"), 810.7083295204786)
+    t.checkOk("ac_ft", units.convert(1.0, from: "ac_ft", to: "acre_foot"), 1.0)
+    t.checkOk("inH2O", units.convert(1.0, from: "inH2O", to: "Pa"), 249.08890999999994)
+    t.checkOk("' is a foot", units.factor(from: "'", to: "ft"), 1.0)
+    t.checkOk("\" is an inch", units.factor(from: "\"", to: "in"), 1.0)
+    // An angle is a dimension: rpm isn't Hz.
+    t.checkOk("rpm in rad/s", units.convert(60.0, from: "rpm", to: "rad/s"), 2.0 * pi)
+    t.checkOk("rpm in deg/s", units.convert(1.0, from: "rpm", to: "deg/s"), 6.0)
+    t.checkFails("rpm in Hz", units.convert(1.0, from: "rpm", to: "Hz"), "can't convert rpm (an angular velocity) to Hz (a frequency)")
+    // Plain numbers, and pint's names that surprise engineers.
+    t.checkOk("% in ppm", units.convert(1.0, from: "%", to: "ppm"), 10000.0)
+    t.checkOk("mil is an angle", units.convert(64000.0, from: "mil", to: "turn"), 1.0)
+    t.checkOk("thou", units.convert(1.0, from: "thou", to: "in"), 0.001)
+    // What can't be a unit.
+    t.checkFails("prefixed °C", units.convert(1.0, from: "kdegC", to: "K"), "can't have a prefix")
+    t.checkFails("dB·m", units.convert(1.0, from: "dB·m", to: "m"), "can't be combined")
+    t.checkFails("m/s to s", units.convert(1.0, from: "m", to: "s"), "can't convert m (a length) to s (a time)")
+    t.checkFails("factor of °C", units.factor(from: "°C", to: "°F"), "use convert")
+    t.checkFails("factor of dB", units.factor(from: "dBm", to: "mW"), "use convert")
+    t.checkOk("factor kip", units.factor(from: "kip", to: "kN"), 4.4482216152605)
+    t.checkTrue("isUnit kN", units.isUnit("kN"))
+    t.checkTrue("isUnit kN/m²", units.isUnit("kN/m²"))
+    t.checkTrue("not isUnit frob", !units.isUnit("frob"))
+    t.checkTrue("not isUnit m+", !units.isUnit("m+"))
+    // SI values.
+    t.checkOk("toSI", units.toSI(1.0, "kN"), 1000.0)
+    t.checkOk("toSI °C", units.toSI(20.0, "°C"), 293.15)
+    t.checkOk("fromSI", units.fromSI(1000.0, "kN"), 1.0)
+    t.checkOk("fromSI °F", units.fromSI(273.15, "°F"), 32.0)
+    // Log units.
+    t.checkOk("0 dBm", units.convert(0.0, from: "dBm", to: "mW"), 1.0)
+    t.checkOk("30 dBm in dBW", units.convert(30.0, from: "dBm", to: "dBW"), 0.0, size: 1.0)
+    t.checkOk("3 dB", units.convert(3.0, from: "dB", to: ""), 1.9952623149688797)
+    // A unit's own fields.
+    match units.unit("°F") {
+        .ok(u) -> {
+            t.checkTrue("°F is offset", u.isOffset())
+            t.checkTrue("°F isn't log", !u.isLog())
+            t.check("°F toSI", u.toSI(32.0), 273.15)
+            t.check("°F fromSI", u.fromSI(373.15), 212.0)
+            t.checkText("°F text", u.text, "°F")
+        }
+        .failure(e) -> t.fail("°F: {e.message}")
+    }
+    t.checkTrue("dBm is log", units.unit("dBm").value()?.isLog() ?? false)
+    t.checkTrue("% is dimensionless", units.unit("%").value()?.isDimensionless() ?? false)
+}
+
+fn testQuantities(_ t: bind Tally) {
+    let span = units.quantity(6.0, "m").valueOr(units.Quantity())
+    let load = units.quantity(12.0, "kN/m").valueOr(units.Quantity())
+    let m = span.power(2.0).times(load).scaled(1.0 / 8.0)
+    t.checkOk("w L² / 8", m.to("kN·m"), 54.0)
+    t.checkText("w L² / 8 shown", m.show("kN·m"), "54.00 kN·m")
+    t.checkText("w L² / 8 dimension", m.dimension(), "energy")
+    let area = units.quantity(0.25, "m²").valueOr(units.Quantity())
+    let p = load.times(span).over(area)
+    t.checkOk("pressure", p.to("kPa"), 288.0)
+    t.checkOk("square root", area.squareRoot().to("mm"), 500.0)
+    t.checkTrue("same dimension", m.sameDimension(units.quantity(1.0, "J").valueOr(units.Quantity())))
+    t.checkTrue("dimensionless", span.over(span).isDimensionless())
+    match span.plus(units.quantity(50.0, "mm").valueOr(units.Quantity())) {
+        .ok(q) -> t.checkOk("6 m + 50 mm", q.to("m"), 6.05)
+        .failure(e) -> t.fail("6 m + 50 mm: {e.message}")
+    }
+    match span.minus(units.quantity(1.0, "ft").valueOr(units.Quantity())) {
+        .ok(q) -> t.checkOk("6 m - 1 ft", q.to("m"), 5.6952)
+        .failure(e) -> t.fail("6 m - 1 ft: {e.message}")
+    }
+    t.checkTrue("m + kN fails", !span.plus(load).isOk())
+    t.checkTrue("m - kN fails", !span.minus(load).isOk())
+    t.checkFails("m in kg", span.to("kg"), "a length can't be in kg (a mass)")
+    t.checkText("show in a unit that doesn't fit", span.show("kg"), "6.00 m")
+    t.checkTrue("unknown unit", !units.quantity(1.0, "frob").isOk())
+    let temp = units.quantity(20.0, "°C").valueOr(units.Quantity())
+    t.check("20 °C is kelvins", temp.value, 293.15)
+    t.checkOk("20 °C in °F", temp.to("°F"), 68.0)
+}
+
+fn testFormat(_ t: bind Tally) {
+    t.checkText("format", units.format(12.5, "kN*m"), "12.50 kN·m")
+    t.checkText("decimals 0", units.format(1234.5678, "mm", decimals: 0), "1235 mm")
+    t.checkText("trim", units.format(2.5, "m", decimals: 4, trim: true), "2.5 m")
+    t.checkText("trim whole", units.format(300.0, "m", decimals: 2, trim: true), "300 m")
+    t.checkText("sig 3", units.format(123456.0, "N", sig: 3), "123000 N")
+    t.checkText("sig 3 small", units.format(0.0012345, "m", sig: 3), "0.00123 m")
+    t.checkText("sig 4", units.format(9.80665, "m/s^2", sig: 4), "9.807 m/s²")
+    t.checkText("sig round up", units.format(9.9996, "m", sig: 4), "10.00 m")
+    t.checkText("degrees", units.format(45.0, "°", decimals: 0), "45°")
+    t.checkText("percent", units.format(12.5, "%", decimals: 1), "12.5%")
+    t.checkText("no unit", units.format(3.14159, "", decimals: 3), "3.142")
+    t.checkText("minus zero", units.format(-0.001, "m"), "0.00 m")
+    t.checkText("formatNumber", units.formatNumber(2.50), "2.5")
+    t.checkText("formatNumber whole", units.formatNumber(300.0), "300")
+    t.checkText("formatNumber -0", units.formatNumber(-0.00001), "0")
+    t.checkText("pretty", units.pretty("kN*m/s^2"), "kN·m/s²")
+    t.checkText("pretty spaces", units.pretty("kg m**-3"), "kg·m⁻³")
+    t.checkText("pretty attached", units.pretty("m3/s"), "m³/s")
+    t.checkText("pretty brackets", units.pretty("W/(m*K)"), "W/(m·K)")
+    t.checkText("pretty half", units.pretty("m^0.5"), "m^0.5")
+    t.checkText("pretty plain", units.pretty("ft"), "ft")
+    t.checkText("autoPrefix mm", units.autoPrefix(0.0012, "m"), "1.20 mm")
+    t.checkText("autoPrefix kN", units.autoPrefix(25000.0, "N"), "25.00 kN")
+    t.checkText("autoPrefix MN", units.autoPrefix(1500.0, "kN"), "1.50 MN")
+    t.checkText("autoPrefix rounds up", units.autoPrefix(999.9999, "m"), "1.00 km")
+    t.checkText("autoPrefix g", units.autoPrefix(0.5, "kg"), "500.00 g")
+    t.checkText("autoPrefix µs", units.autoPrefix(0.000025, "s", trim: true), "25 µs")
+    t.checkText("autoPrefix 1", units.autoPrefix(5.0, "Pa", trim: true), "5 Pa")
+    t.checkText("autoPrefix ft", units.autoPrefix(12.0, "ft"), "12.00 ft")
+    t.checkText("autoPrefix °C", units.autoPrefix(0.001, "°C", decimals: 3), "0.001 °C")
+    t.checkText("feetInches", units.feetInches(5.5208), "5' 6 1/4\"")
+    t.checkText("feetInches m", units.feetInches(1.0, unit: "m"), "3' 3 3/8\"")
+    t.checkText("feetInches zero", units.feetInches(0.0), "0' 0\"")
+    t.checkText("feetInches negative", units.feetInches(-1.5), "-1' 6\"")
+    t.checkText("feetInches rounds to a foot", units.feetInches(0.99999), "1' 0\"")
+    t.checkText("feetInches eighths", units.feetInches(0.5, unit: "in", denominator: 8), "0' 1/2\"")
+    t.checkText("feetInches halves", units.feetInches(10.0, unit: "in", denominator: 2), "0' 10\"")
+    // What feetInches writes, read() reads back.
+    for x in [0.0, 1.0, 5.5208, 12.34, 0.02, 100.123, -3.75] {
+        let text = units.feetInches(x)
+        t.checkOk("read back {text}", units.read(text, unit: "ft"), x, size: 1.0 / 384.0 * 1e9)
+    }
+}
+
+fn testDimensions(_ t: bind Tally) {
+    t.checkText("unit weight", units.dimension("kN/m³").valueOr("?"), "unit_weight")
+    t.checkText("pressure", units.dimension("psi").valueOr("?"), "pressure")
+    t.checkText("energy", units.dimension("kN·m").valueOr("?"), "energy")
+    t.checkText("force per length", units.dimension("N/m").valueOr("?"), "force_per_length")
+    t.checkText("angular velocity", units.dimension("rpm").valueOr("?"), "angular_velocity")
+    t.checkText("thermal conductivity", units.dimension("W/(m·K)").valueOr("?"), "thermal_conductivity")
+    t.checkText("flow", units.dimension("cfs").valueOr("?"), "volumetric_flow_rate")
+    t.checkText("viscosity", units.dimension("Pa·s").valueOr("?"), "viscosity")
+    t.checkText("dimensionless", units.dimension("%").valueOr("?"), "dimensionless")
+    t.checkText("no name", units.dimension("kg·m⁻¹·s⁻³·A").valueOr("?"), "kg·A·m⁻¹·s⁻³")
+    t.checkTrue("dimension of junk fails", !units.dimension("frob").isOk())
+    let names = units.dimensionNames("kN·m")
+    t.checkTrue("moment among kN·m's names", names.contains("moment"))
+    t.checkTrue("torque among kN·m's names", names.contains("torque"))
+    t.checkTrue("no names for junk", units.dimensionNames("frob").isEmpty)
+    t.checkTrue("dimensionOf", units.dimensionOf("unit weight") == [-2.0, 1.0, -2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    t.checkTrue("dimensionOf any case", units.dimensionOf("Pressure") != nil)
+    t.checkTrue("dimensionOf junk", units.dimensionOf("frobness") == nil)
+    t.checkTrue("dimensionsList", units.dimensionsList().contains("thermal_conductivity"))
+    t.checkText("siUnit", units.siUnit(units.dimensionOf("pressure") ?? []), "kg·m⁻¹·s⁻²")
+    t.checkTrue("same dimension", units.sameDimension("kN", "lbf"))
+    t.checkTrue("not same dimension", !units.sameDimension("kN", "kg"))
+    t.checkTrue("not same for junk", !units.sameDimension("kN", "frob"))
+    let lengths = units.unitsFor("length")
+    t.checkTrue("unitsFor length has m, ft, in", lengths.contains("m") && lengths.contains("ft") && lengths.contains("in"))
+    t.checkTrue("unitsFor by a unit", units.unitsFor("kN").contains("lbf"))
+    t.checkTrue("unitsFor junk", units.unitsFor("frob").isEmpty)
+    t.checkText("commonUnits pressure", (units.commonUnits("pressure").first ?? ""), "Pa")
+    t.checkText("commonUnits stress", (units.commonUnits("stress").first ?? ""), "Pa")
+    t.checkTrue("commonUnits fallback", units.commonUnits("electric_potential").contains("V"))
+    for d in ["length", "area", "volume", "mass", "time", "temperature", "angle", "force", "pressure", "energy",
+              "moment", "power", "velocity", "acceleration", "density", "unit_weight", "force_per_length",
+              "volumetric_flow_rate", "frequency", "second_moment_of_area", "rainfall_intensity", "viscosity",
+              "kinematic_viscosity", "information"] {
+        let want = units.dimensionOf(d) ?? []
+        for u in units.commonUnits(d) {
+            match units.unit(u) {
+                .ok(x) -> t.checkTrue("common unit {u} is a {d}", x.dims == want || (d == "moment" && x.dims == (units.dimensionOf("energy") ?? [])))
+                .failure(e) -> t.fail("common unit {u}: {e.message}")
+            }
+        }
+    }
+    if let i = units.info("ft") {
+        t.checkText("info name", i.name, "foot")
+        t.checkText("info symbol", i.symbol, "ft")
+        t.check("info factor", i.factor, 0.3048)
+        t.checkText("info dimension", i.dimension, "length")
+        t.checkTrue("info names", i.names.contains("feet"))
+    } else {
+        t.fail("info ft")
+    }
+    t.checkTrue("info of a prefixed name", units.info("kN") == nil)
+    t.checkTrue("allUnits", units.allUnits().count > 400)
+}
+
+fn testSystems(_ t: bind Tally) {
+    t.checkTrue("six systems", units.systemNames().count == 6)
+    for name in units.systemNames() {
+        let s = units.system(name)
+        t.checkTrue("system {name}", s != nil)
+        for u in (s?.units ?? []) {
+            t.checkTrue("{name}: {u} is a unit", units.isUnit(u))
+        }
+    }
+    t.checkTrue("unknown system", units.system("Martian") == nil)
+    let si = units.system("SI kN-m") ?? units.UnitSystem(name: "", units: [])
+    let mm = units.system("SI kN-mm") ?? units.UnitSystem(name: "", units: [])
+    let us = units.system("US") ?? units.UnitSystem(name: "", units: [])
+    let kip = units.system("US kip-ft") ?? units.UnitSystem(name: "", units: [])
+    t.checkText("kip-ft moment", kip.unitForUnit("kN·m"), "kip·ft")
+    t.checkText("kip-ft showValue", kip.showValue(100.0, "kN·m"), "73.76 kip·ft")
+    t.checkText("kN-mm stress", mm.unitForDimension("stress"), "MPa")
+    t.checkText("kN-m unit weight", si.unitForDimension("unit weight"), "kN/m³")
+    t.checkText("US force", us.unitForUnit("kN"), "lbf")
+    t.checkText("US temperature", us.unitForUnit("°C"), "°F")
+    t.checkText("no unit for it", us.unitForUnit("mol/m³"), "")
+    t.checkText("junk", us.unitForUnit("frob"), "")
+    let (x, u) = us.convert(12.0, from: "kN")
+    t.check("US convert", x, 2697.7073171965258)
+    t.checkText("US convert unit", u, "lbf")
+    let (same, keep) = us.convert(5.0, from: "mol/m³")
+    t.check("no unit keeps the value", same, 5.0)
+    t.checkText("no unit keeps the unit", keep, "mol/m³")
+    let gamma = units.quantity(10.0, "kN/m³").valueOr(units.Quantity())
+    t.checkText("US show", us.show(gamma), "63.66 pcf")
+    t.checkText("kN-m show", si.show(gamma, decimals: 1), "10.0 kN/m³")
+    let odd = units.quantity(2.0, "mol/m³").valueOr(units.Quantity())
+    t.checkText("show without a unit", si.show(odd), "2.00 mol·m⁻³")
+    // A system of your own.
+    var mine = units.UnitSystem(name: "Mine", units: ["cm", "t"])
+    t.checkText("mine length", mine.unitForUnit("ft"), "cm")
+    mine.units.insert("mm", at: 0)
+    t.checkText("mine length, mm first", mine.unitForUnit("ft"), "mm")
+}
+
+fn main() {
+    var t = Tally()
+    testCases(t)
+    testReading(t)
+    testUnits(t)
+    testQuantities(t)
+    testFormat(t)
+    testDimensions(t)
+    testSystems(t)
+    print("{t.checks - t.failures} of {t.checks} checks passed")
+    if t.failures > 0 {
+        exit(1)
+    }
+}

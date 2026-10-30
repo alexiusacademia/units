@@ -1,0 +1,238 @@
+// units: the registry. It reads the rows of table.tsl into units, prefixes
+// and dimensions, and finds a unit by any of its names the way pint does:
+// a name as it is first ("min" is a minute), then a prefix and a unit
+// ("kft", "kilofeet", "µs"), then the same with an "s" taken off the end
+// ("kips", "meters").
+//
+// Author: Alexius Academia
+// Date: 2026-10-30
+
+// How many base dimensions there are (length, mass, time, temperature,
+// angle, current, substance, luminosity, information, printing_unit).
+let dimCount = 10
+
+fn zeroDims() -> [Float] {
+    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+}
+
+// unit:
+//   A unit, as SI sees it. A value x in it is x × factor in SI base units
+//   (metres, kilograms, seconds, kelvins, radians, amperes, moles, candelas,
+//   bits), plus `offset` for °C, °F and °Ré. A log unit (dB, dBm, Np) is
+//   factor × logBase^(x / logFactor) instead. `dims` are the powers of the
+//   base dimensions, and `text` is how the unit was written.
+public struct Unit {
+    factor: Float = 1.0
+    dims: [Float] = zeroDims()
+    offset: Float = 0.0
+    logBase: Float = 0.0
+    logFactor: Float = 0.0
+    text: String = ""
+
+    // Whether it's a temperature with a zero of its own (°C, °F).
+    fn isOffset() -> Bool {
+        offset != 0.0
+    }
+
+    // Whether it's a log unit (dB, dBm, Np, octave).
+    fn isLog() -> Bool {
+        logBase != 0.0
+    }
+
+    // Whether it has no dimension (a ratio, %, ppm, a count).
+    fn isDimensionless() -> Bool {
+        dims == zeroDims()
+    }
+
+    // A value in this unit, in SI base units.
+    fn toSI(_ x: Float) -> Float {
+        if logBase != 0.0 {
+            return factor * pow(logBase, x / logFactor)
+        }
+        x * factor + offset
+    }
+
+    // A value in SI base units, in this unit.
+    fn fromSI(_ v: Float) -> Float {
+        if logBase != 0.0 {
+            return logFactor * log(v / factor) / log(logBase)
+        }
+        (v - offset) / factor
+    }
+}
+
+// A unit in the table, with its names.
+struct Entry {
+    name: String
+    symbol: String
+    names: [String]
+    unit: Unit
+}
+
+struct Registry {
+    entries: [Entry]
+    // Every name, symbol and alias, to its entry.
+    byName: [String: Int]
+    // Prefix names and symbols in the order pint tries them, with factors.
+    prefixKeys: [String]
+    prefixFactors: [Float]
+    // Named dimensions: pint's, then the engineering ones.
+    dimNames: [String]
+    dimValues: [[Float]]
+    // Every character used in a unit's name, beyond ASCII letters, digits
+    // and _.
+    nameChars: Set<String>
+}
+
+fn parseDims(_ text: String) -> [Float] {
+    var out = zeroDims()
+    var k = 0
+    for part in text.split(",") {
+        if k < dimCount {
+            out[k] = Float(part) ?? 0.0
+        }
+        k += 1
+    }
+    out
+}
+
+fn makeRegistry() -> Registry {
+    var entries: [Entry] = []
+    var byName: [String: Int] = [:]
+    var chars: Set<String> = []
+    for row in unitRows {
+        let f = row.split("|")
+        let names = f[2].split(",")
+        let unit = Unit(factor: Float(f[3]) ?? 1.0, dims: parseDims(f[4]), offset: Float(f[5]) ?? 0.0,
+                        logBase: Float(f[6]) ?? 0.0, logFactor: Float(f[7]) ?? 0.0, text: f[1])
+        let k = entries.count
+        entries.append(Entry(name: f[0], symbol: f[1], names: names, unit: unit))
+        for n in names {
+            if byName[n] == nil {
+                byName[n] = k
+            }
+            for ch in n.characters {
+                if !isPlainNameChar(ch) {
+                    chars.insert(ch)
+                }
+            }
+        }
+    }
+    var keys: [String] = []
+    var factors: [Float] = []
+    for row in prefixRows {
+        let f = row.split("|")
+        keys.append(f[0])
+        factors.append(Float(f[1]) ?? 1.0)
+    }
+    var dimNames: [String] = []
+    var dimValues: [[Float]] = []
+    // Engineering names first, so a dimension is called what engineers call
+    // it: N/m³ is a unit weight, N/m a force per length.
+    for (name, dims) in engineeringDimensions() {
+        dimNames.append(name)
+        dimValues.append(dims)
+    }
+    for k in 0..dimCount {
+        var d = zeroDims()
+        d[k] = 1.0
+        dimNames.append(baseNames[k])
+        dimValues.append(d)
+    }
+    for row in dimensionRows {
+        let f = row.split("|")
+        if !dimNames.contains(f[0]) {
+            dimNames.append(f[0])
+            dimValues.append(parseDims(f[1]))
+        }
+    }
+    Registry(entries: entries, byName: byName, prefixKeys: keys, prefixFactors: factors,
+             dimNames: dimNames, dimValues: dimValues, nameChars: chars)
+}
+
+fn isPlainNameChar(_ ch: String) -> Bool {
+    (ch >= "a" && ch <= "z") || (ch >= "A" && ch <= "Z") || (ch >= "0" && ch <= "9") || ch == "_"
+}
+
+fn dimsOf(_ length: Float, _ mass: Float, _ time: Float) -> [Float] {
+    var d = zeroDims()
+    d[0] = length
+    d[1] = mass
+    d[2] = time
+    d
+}
+
+// Names engineers use that pint doesn't, ahead of pint's own.
+fn engineeringDimensions() -> [(String, [Float])] {
+    [("length", dimsOf(1, 0, 0)), ("area", dimsOf(2, 0, 0)), ("volume", dimsOf(3, 0, 0)),
+     ("mass", dimsOf(0, 1, 0)), ("time", dimsOf(0, 0, 1)),
+     ("force", dimsOf(1, 1, -2)), ("pressure", dimsOf(-1, 1, -2)), ("energy", dimsOf(2, 1, -2)),
+     ("power", dimsOf(2, 1, -3)), ("velocity", dimsOf(1, 0, -1)), ("acceleration", dimsOf(1, 0, -2)),
+     ("density", dimsOf(-3, 1, 0)), ("unit_weight", dimsOf(-2, 1, -2)),
+     ("force_per_length", dimsOf(0, 1, -2)), ("volumetric_flow_rate", dimsOf(3, 0, -1)),
+     ("frequency", dimsOf(0, 0, -1)), ("stress", dimsOf(-1, 1, -2)), ("moment", dimsOf(2, 1, -2)),
+     ("second_moment_of_area", dimsOf(4, 0, 0)), ("section_modulus", dimsOf(3, 0, 0)),
+     ("stiffness", dimsOf(0, 1, -2)), ("rainfall_intensity", dimsOf(1, 0, -1)),
+     ("angular_velocity", withDim(dimsOf(0, 0, -1), 4, 1.0)),
+     ("thermal_conductivity", withDim(dimsOf(1, 1, -3), 3, -1.0)),
+     ("heat_transfer_coefficient", withDim(dimsOf(0, 1, -3), 3, -1.0))]
+}
+
+fn withDim(_ dims: [Float], _ k: Int, _ p: Float) -> [Float] {
+    var d = dims
+    d[k] = p
+    d
+}
+
+let reg: Registry = makeRegistry()
+
+// The unit with exactly this name, or nil.
+fn exactUnit(_ name: String) -> Unit? {
+    if let k = reg.byName[name] {
+        var u = reg.entries[k].unit
+        u.text = name
+        return u
+    }
+    nil
+}
+
+// A unit by one of its names, with a prefix, or with an "s" on the end, as
+// pint finds it. The second value says why there isn't one.
+fn findUnit(_ name: String) -> (Unit?, String) {
+    if let u = exactUnit(name) {
+        return (u, "")
+    }
+    for suffix in ["", "s"] {
+        if !name.hasSuffix(suffix) {
+            continue
+        }
+        let total = name.count
+        let stem = name.substring(from: 0, to: total - suffix.count)
+        // No prefix (only for a plural: the plain name was tried above).
+        if !suffix.isEmpty && stem.count != 1 {
+            if let u = exactUnit(stem) {
+                var named = u
+                named.text = name
+                return (named, "")
+            }
+        }
+        var k = 0
+        while k < reg.prefixKeys.count {
+            let p = reg.prefixKeys[k]
+            if stem.hasPrefix(p) {
+                let rest = stem.substring(from: p.count, to: stem.count)
+                if !(suffix.count > 0 && rest.count == 1) {
+                    if let base = exactUnit(rest) {
+                        if base.isOffset() || base.isLog() {
+                            return (nil, "\"{rest}\" can't have a prefix")
+                        }
+                        let f = reg.prefixFactors[k]
+                        return (Unit(factor: base.factor * f, dims: base.dims, text: name), "")
+                    }
+                }
+            }
+            k += 1
+        }
+    }
+    (nil, "\"{name}\" isn't a unit")
+}

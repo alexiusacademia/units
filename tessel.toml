@@ -1,0 +1,12 @@
+# The version of Tessel this project uses: Tessel's commands, editors and
+# the IDE run it with this version, whatever version is installed (and
+# install it the first time). `tessel pin` changes it.
+tessel = "0.10.0"
+
+# What `tessel publish` publishes. Programs use the library by this name:
+# `tessel add units`, then `import units`.
+[library]
+name = "units"
+version = "0.1.0"
+description = "Units for engineering: every unit pint knows plus engineering ones, conversions, checked quantities, reading \"5' 6 1/4\\\"\" and \"1 m + 50 mm\", formatting and unit systems"
+license = "MIT"

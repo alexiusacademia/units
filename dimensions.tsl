@@ -1,0 +1,259 @@
+// units: what a unit measures. Names for dimensions ("length",
+// "pressure", "unit_weight"), the SI unit of any dimension ("kg·m⁻¹·s⁻²"),
+// every unit of a dimension, and a short list of the usual ones for unit
+// pickers.
+//
+// Author: Alexius Academia
+// Date: 2026-10-30
+
+// SI symbols of the base dimensions, in the order of `dims`.
+let baseSymbols = ["m", "kg", "s", "K", "rad", "A", "mol", "cd", "bit", "pixel"]
+
+// The order base units are written in: kg·m·s·A·K·mol·cd·rad·bit·pixel,
+// positive powers before negative ones.
+let symbolOrder = [1, 0, 2, 5, 3, 6, 7, 4, 8, 9]
+
+fn superscriptText(_ p: Float) -> String {
+    if p != floor(p) {
+        return "^{formatNumber(p, decimals: 6)}"
+    }
+    let digits = ["⁰", "¹", "²", "³", "⁴", "⁵", "⁶", "⁷", "⁸", "⁹"]
+    let n = Int(abs(p))
+    var out = ""
+    for ch in "{n}".characters {
+        out += digits[Int(ch) ?? 0]
+    }
+    if p < 0.0 { "⁻" + out } else { out }
+}
+
+// siUnit(dims)
+//   The SI unit of a dimension, from base units: "kg·m⁻¹·s⁻²" for a
+//   pressure, "" for a plain number.
+public fn siUnit(_ dims: [Float]) -> String {
+    // Positive powers first: mol·m⁻³, not m⁻³·mol.
+    var parts: [String] = []
+    for positive in [true, false] {
+        for k in symbolOrder {
+            let p = dims[k]
+            if p == 0.0 || (p > 0.0) != positive {
+                continue
+            }
+            parts.append(if p == 1.0 { baseSymbols[k] } else { baseSymbols[k] + superscriptText(p) })
+        }
+    }
+    parts.joined(separator: "·")
+}
+
+// The name a dimension is known by, or "".
+fn nameOfDims(_ dims: [Float]) -> String {
+    if dims == zeroDims() {
+        return "dimensionless"
+    }
+    var k = 0
+    while k < reg.dimNames.count {
+        if reg.dimValues[k] == dims {
+            return reg.dimNames[k]
+        }
+        k += 1
+    }
+    ""
+}
+
+// A dimension for messages: "a length", "an area", "a unit weight", or "a
+// quantity in kg·m⁻¹" when it has no name.
+fn describeDims(_ dims: [Float]) -> String {
+    if dims == zeroDims() {
+        return "a plain number"
+    }
+    let name = nameOfDims(dims)
+    if name.isEmpty {
+        return "a quantity in {siUnit(dims)}"
+    }
+    let words = name.replace("_", with: " ")
+    let first = words.character(at: 0) ?? ""
+    // "a unit weight", but "an area", "an angle".
+    let vowel = ["a", "e", "i", "o", "u"].contains(first) && !words.hasPrefix("uni")
+    if vowel { "an {words}" } else { "a {words}" }
+}
+
+fn dimsFromName(_ name: String) -> [Float]? {
+    let key = name.trim().replace(" ", with: "_").lowercase()
+    if key == "dimensionless" {
+        return zeroDims()
+    }
+    var k = 0
+    while k < reg.dimNames.count {
+        if reg.dimNames[k].lowercase() == key {
+            return reg.dimValues[k]
+        }
+        k += 1
+    }
+    nil
+}
+
+// dimension(unit)
+//   What a unit measures: "length", "pressure", "unit_weight",
+//   "dimensionless". A dimension without a name gives its SI unit
+//   ("kg·m⁻¹·s"). Names use _ for spaces, as in pint.
+//
+//   print(try units.dimension("kN/m³"))    // unit_weight
+public fn dimension(_ unit: String) -> Result<String> {
+    let u = try parseUnit(unit)
+    let name = nameOfDims(u.dims)
+    Result.ok(value: if name.isEmpty { siUnit(u.dims) } else { name })
+}
+
+// dimensionNames(unit)
+//   Every name of what a unit measures: kN·m is ["energy", "moment",
+//   "torque", "work"]; [] when the unit isn't known or has no name.
+public fn dimensionNames(_ unit: String) -> [String] {
+    var out: [String] = []
+    if let u = parseUnit(unit).value() {
+        var k = 0
+        while k < reg.dimNames.count {
+            if reg.dimValues[k] == u.dims && !out.contains(reg.dimNames[k]) {
+                out.append(reg.dimNames[k])
+            }
+            k += 1
+        }
+    }
+    out
+}
+
+// dimensionsList()
+//   The names of all dimensions units knows: the base ones, pint's and the
+//   engineering ones.
+public fn dimensionsList() -> [String] {
+    reg.dimNames.unique()
+}
+
+// dimensionOf(name)
+//   The powers of the base dimensions in a named dimension, or nil:
+//   "pressure" (or "Pressure", or "unit weight") gives [-1, 1, -2, 0, …].
+public fn dimensionOf(_ name: String) -> [Float]? {
+    dimsFromName(name)
+}
+
+// sameDimension(a, b)
+//   Whether two units measure the same thing, so one converts to the other.
+public fn sameDimension(_ a: String, _ b: String) -> Bool {
+    if let ua = parseUnit(a).value() {
+        if let ub = parseUnit(b).value() {
+            return ua.dims == ub.dims
+        }
+    }
+    false
+}
+
+// Units of a dimension given by name, or by a unit of it.
+fn dimsOfTarget(_ dimensionOrUnit: String) -> [Float]? {
+    if let d = dimsFromName(dimensionOrUnit) {
+        return d
+    }
+    if let u = parseUnit(dimensionOrUnit).value() {
+        return u.dims
+    }
+    nil
+}
+
+// unitsFor(dimension)
+//   The symbols of every unit of a dimension, in pint's order: "length"
+//   gives m, ft, in, mi and 50 more. `dimension` can be a name or a unit
+//   ("kN" for forces).
+public fn unitsFor(_ dimension: String) -> [String] {
+    var out: [String] = []
+    if let d = dimsOfTarget(dimension) {
+        for e in reg.entries {
+            if e.unit.dims == d && !out.contains(e.symbol) {
+                out.append(e.symbol)
+            }
+        }
+    }
+    out
+}
+
+// commonUnits(dimension)
+//   A short list of the units engineers use for a dimension, metric first,
+//   for a unit picker: "pressure" gives Pa, kPa, MPa, GPa, bar, atm, psi,
+//   ksi, psf, ksf. For a dimension without a list, the units from unitsFor.
+public fn commonUnits(_ dimension: String) -> [String] {
+    let lists: [String: [String]] = [
+        "length": ["m", "mm", "cm", "km", "in", "ft", "yd", "mi"],
+        "area": ["m²", "mm²", "cm²", "km²", "ha", "in²", "ft²", "acre"],
+        "volume": ["m³", "L", "mL", "cm³", "mm³", "MCM", "ft³", "in³", "yd³", "gal", "ac_ft"],
+        "mass": ["kg", "g", "t", "lb", "oz", "ton", "slug"],
+        "time": ["s", "min", "h", "day", "week", "year"],
+        "temperature": ["°C", "K", "°F", "°R"],
+        "angle": ["deg", "rad", "grade", "arcmin", "arcsec", "turn"],
+        "force": ["N", "kN", "MN", "kgf", "tf", "lbf", "kip"],
+        "pressure": ["Pa", "kPa", "MPa", "GPa", "bar", "atm", "mmHg", "psi", "ksi", "psf", "ksf", "inHg", "ftH2O"],
+        "energy": ["J", "kJ", "MJ", "kWh", "cal", "kcal", "BTU", "ft_lb"],
+        "moment": ["N·m", "kN·m", "kN·mm", "N·mm", "lbf·ft", "lbf·in", "kip·ft", "kip·in"],
+        "power": ["W", "kW", "MW", "hp", "BTU/h"],
+        "velocity": ["m/s", "km/h", "mm/s", "ft/s", "mph", "knot"],
+        "acceleration": ["m/s²", "ft/s²", "g0"],
+        "density": ["kg/m³", "g/cm³", "t/m³", "lb/ft³", "slug/ft³"],
+        "unit_weight": ["kN/m³", "N/m³", "pcf", "kcf", "pci"],
+        "force_per_length": ["N/m", "kN/m", "N/mm", "lbf/ft", "klf", "lbf/in", "kip/in"],
+        "volumetric_flow_rate": ["m³/s", "L/s", "m³/h", "L/min", "cfs", "gpm", "MGD"],
+        "frequency": ["Hz", "kHz", "MHz", "1/min"],
+        "second_moment_of_area": ["mm⁴", "cm⁴", "m⁴", "in⁴", "ft⁴"],
+        "rainfall_intensity": ["mm/h", "mm/day", "in/h", "in/day"],
+        "viscosity": ["Pa·s", "mPa·s", "cP", "P", "lbf·s/ft²"],
+        "kinematic_viscosity": ["m²/s", "mm²/s", "cSt", "St", "ft²/s"],
+        "information": ["bit", "B", "kB", "MB", "GB", "TB", "KiB", "MiB", "GiB"]]
+    var key = dimension.trim().replace(" ", with: "_").lowercase()
+    if key == "stress" {
+        key = "pressure"
+    }
+    if key == "stiffness" {
+        key = "force_per_length"
+    }
+    if key == "torque" {
+        key = "moment"
+    }
+    if key == "speed" {
+        key = "velocity"
+    }
+    if key == "section_modulus" {
+        key = "volume"
+    }
+    if let list = lists[key] {
+        return list
+    }
+    unitsFor(dimension)
+}
+
+// unitInfo:
+//   What units knows about one unit: its name ("foot"), symbol ("ft"),
+//   every name it goes by, its factor to SI base units, its offset (°C,
+//   °F), and what it measures.
+public struct UnitInfo {
+    name: String
+    symbol: String
+    names: [String]
+    factor: Float
+    offset: Float
+    dimension: String
+}
+
+// info(name)
+//   What units knows about a unit, found by any of its names, or nil.
+//   Prefixed names ("kN") aren't in the table: info("kN") is nil, and
+//   info("newton") isn't.
+public fn info(_ name: String) -> UnitInfo? {
+    if let k = reg.byName[name] {
+        let e = reg.entries[k]
+        let d = nameOfDims(e.unit.dims)
+        return UnitInfo(name: e.name, symbol: e.symbol, names: e.names, factor: e.unit.factor,
+                        offset: e.unit.offset, dimension: if d.isEmpty { siUnit(e.unit.dims) } else { d })
+    }
+    nil
+}
+
+// allUnits()
+//   The names of all the units in the table, in pint's order (440 or so;
+//   with prefixes, many more read).
+public fn allUnits() -> [String] {
+    reg.entries.map { e in e.name }
+}

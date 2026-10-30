@@ -1,0 +1,174 @@
+// units: converting numbers, and quantities that carry their dimension.
+// convert() and friends work on plain numbers, for apps that keep Floats
+// and convert where values come in and go out. A Quantity keeps its value
+// in SI base units with its dimension, and its sums check that the
+// dimensions agree.
+//
+// Author: Alexius Academia
+// Date: 2026-10-30
+
+fn cantConvert(_ from: Unit, _ to: Unit, _ fromText: String, _ toText: String) -> Error {
+    Error("can't convert {fromText.trim()} ({describeDims(from.dims)}) to {toText.trim()} ({describeDims(to.dims)})")
+}
+
+// convert(x, from:, to:)
+//   x in one unit, in another: convert(3, from: "ft", to: "m") is 0.9144.
+//   Temperatures convert with their zeros (20 °C is 68 °F) and log units
+//   with their scales (10 dBm is 10 mW). A failure says why: an unknown
+//   unit, or two that measure different things.
+//
+//   let m = try units.convert(3.0, from: "ft", to: "m")
+public fn convert(_ x: Float, from: String, to: String) -> Result<Float> {
+    let a = try parseUnit(from)
+    let b = try parseUnit(to)
+    if a.dims != b.dims {
+        return Result.failure(error: cantConvert(a, b, from, to))
+    }
+    Result.ok(value: b.fromSI(a.toSI(x)))
+}
+
+// factor(from:, to:)
+//   What to multiply by to convert from one unit to another:
+//   factor(from: "kip", to: "kN") is 4.448. Not for temperatures with
+//   zeros of their own (°C, °F) or log units (dB): use convert for those.
+public fn factor(from: String, to: String) -> Result<Float> {
+    let a = try parseUnit(from)
+    let b = try parseUnit(to)
+    if a.dims != b.dims {
+        return Result.failure(error: cantConvert(a, b, from, to))
+    }
+    if a.isOffset() || b.isOffset() || a.isLog() || b.isLog() {
+        return Result.failure(error: Error("{from.trim()} to {to.trim()} isn't a factor; use convert"))
+    }
+    Result.ok(value: a.factor / b.factor)
+}
+
+// toSI(x, unit)
+//   x in a unit, in SI base units (metres, kilograms, seconds, kelvins,
+//   radians…): toSI(1, "kN") is 1000.
+public fn toSI(_ x: Float, _ unit: String) -> Result<Float> {
+    let u = try parseUnit(unit)
+    Result.ok(value: u.toSI(x))
+}
+
+// fromSI(v, unit)
+//   A value in SI base units, in a unit: fromSI(1000, "kN") is 1.
+public fn fromSI(_ v: Float, _ unit: String) -> Result<Float> {
+    let u = try parseUnit(unit)
+    Result.ok(value: u.fromSI(v))
+}
+
+// quantity:
+//   A value with its dimension: `value` is in SI base units (a temperature
+//   in kelvins, from its zero), and `dims` are the powers of the base
+//   dimensions. Make one with quantity(x, unit) or readQuantity(text).
+public struct Quantity {
+    value: Float = 0.0
+    dims: [Float] = zeroDims()
+
+    // The value in a unit, if it measures the same thing.
+    //   let ft = try q.to("ft")
+    fn to(_ unit: String) -> Result<Float> {
+        let u = try parseUnit(unit)
+        if u.dims != dims {
+            return Result.failure(error: Error("{describeDims(dims)} can't be in {unit.trim()} ({describeDims(u.dims)})"))
+        }
+        Result.ok(value: u.fromSI(value))
+    }
+
+    // The sum, if both measure the same thing.
+    fn plus(_ other: Quantity) -> Result<Quantity> {
+        if other.dims != dims {
+            return Result.failure(error: Error("can't add {describeDims(dims)} and {describeDims(other.dims)}"))
+        }
+        Result.ok(value: Quantity(value: value + other.value, dims: dims))
+    }
+
+    // The difference, if both measure the same thing.
+    fn minus(_ other: Quantity) -> Result<Quantity> {
+        if other.dims != dims {
+            return Result.failure(error: Error("can't subtract {describeDims(other.dims)} from {describeDims(dims)}"))
+        }
+        Result.ok(value: Quantity(value: value - other.value, dims: dims))
+    }
+
+    // The product: a force times a length is a moment.
+    fn times(_ other: Quantity) -> Quantity {
+        var d = dims
+        for k in 0..dimCount {
+            d[k] += other.dims[k]
+        }
+        Quantity(value: value * other.value, dims: d)
+    }
+
+    // The quotient: a force over an area is a pressure.
+    fn over(_ other: Quantity) -> Quantity {
+        var d = dims
+        for k in 0..dimCount {
+            d[k] -= other.dims[k]
+        }
+        Quantity(value: value / other.value, dims: d)
+    }
+
+    // The quantity times a plain number.
+    fn scaled(_ k: Float) -> Quantity {
+        Quantity(value: value * k, dims: dims)
+    }
+
+    // The quantity to a power: a length squared is an area.
+    fn power(_ p: Float) -> Quantity {
+        Quantity(value: pow(value, p), dims: dims.map { d in d * p })
+    }
+
+    // The square root: of an area, a length.
+    fn squareRoot() -> Quantity {
+        Quantity(value: sqrt(value), dims: dims.map { d in d / 2.0 })
+    }
+
+    // Whether it's a plain number (a ratio, %, a count).
+    fn isDimensionless() -> Bool {
+        dims == zeroDims()
+    }
+
+    // Whether it measures the same thing as another quantity.
+    fn sameDimension(_ other: Quantity) -> Bool {
+        dims == other.dims
+    }
+
+    // What it measures: "length", "pressure", or its SI unit when the
+    // dimension has no name.
+    fn dimension() -> String {
+        let name = nameOfDims(dims)
+        if name.isEmpty { siUnit(dims) } else { name }
+    }
+
+    // The value in a unit, as text with the unit: "12.50 kN·m". With
+    // `sig`, that many significant figures instead of `decimals`. A unit
+    // that doesn't fit gives the value in SI base units.
+    fn show(_ unit: String, decimals: Int = 2, sig: Int = 0, trim: Bool = false) -> String {
+        if let x = to(unit).value() {
+            return format(x, unit, decimals: decimals, sig: sig, trim: trim)
+        }
+        format(value, siUnit(dims), decimals: decimals, sig: sig, trim: trim)
+    }
+}
+
+// quantity(x, unit)
+//   x in a unit, as a quantity: quantity(3, "ft").
+//
+//   let span = try units.quantity(6.0, "m")
+//   let load = try units.quantity(12.0, "kN/m")
+//   let m = span.power(2).times(load).scaled(1.0 / 8.0)     // w L² / 8
+//   print(m.show("kN·m"))                                   // 54.00 kN·m
+public fn quantity(_ x: Float, _ unit: String) -> Result<Quantity> {
+    let u = try parseUnit(unit)
+    Result.ok(value: Quantity(value: u.toSI(x), dims: u.dims))
+}
+
+// readQuantity(text)
+//   A quantity from text, as read() reads it: "3 ft 6 in", "12 kN/m",
+//   "1 m + 50 mm", "68 °F". A plain number is a dimensionless quantity.
+public fn readQuantity(_ text: String) -> Result<Quantity> {
+    let q = try readAmount(text, Unit())
+    Result.ok(value: Quantity(value: q.v, dims: q.dims))
+}

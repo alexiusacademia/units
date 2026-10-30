@@ -1,0 +1,119 @@
+// units' example: a converter. Type a value with its units ("5' 6 1/4\"",
+// "120 pcf", "68 °F", "3 kN/m + 200 lbf/ft") and see what it measures, the
+// value in the usual units of that dimension, in a unit system, and in any
+// unit you type.
+// `tessel run examples` opens it.
+//
+// Author: Alexius Academia
+// Date: 2026-10-30
+
+import ".."
+
+// A row of the table: the value and its unit.
+struct Row {
+    value: String
+    unit: String
+}
+
+// The value in each of the usual units of its dimension, and in feet and
+// inches for a length.
+fn rows(_ q: units.Quantity) -> [Row] {
+    var out: [Row] = []
+    var list = units.commonUnits(q.dimension())
+    if list.isEmpty {
+        list = [units.siUnit(q.dims)]
+    }
+    for u in list.prefix(12) {
+        if let x = q.to(u).value() {
+            out.append(Row(value: units.format(x, "", sig: 6, trim: true), unit: units.pretty(u)))
+        }
+    }
+    if q.dimension() == "length" {
+        out.append(Row(value: units.feetInches(q.value, unit: "m"), unit: "ft-in"))
+    }
+    out
+}
+
+// What the typed text measures, or why it can't be read.
+fn summary(_ text: String) -> String {
+    match units.readQuantity(text) {
+        .ok(q) -> {
+            let name = q.dimension().replace("_", with: " ")
+            "{name} · {units.format(q.value, units.siUnit(q.dims), sig: 6, trim: true)} in SI base units"
+        }
+        .failure(e) -> e.message
+    }
+}
+
+fn readOk(_ text: String) -> Bool {
+    units.readQuantity(text).isOk()
+}
+
+// The value in the system's unit for it.
+fn inSystem(_ text: String, _ systemName: String) -> String {
+    if let q = units.readQuantity(text).value() {
+        if let s = units.system(systemName) {
+            return s.show(q, sig: 6, trim: true)
+        }
+    }
+    "—"
+}
+
+// The value in a unit the user typed.
+fn inTarget(_ text: String, _ target: String) -> String {
+    if target.trim().isEmpty {
+        return "Type a unit: mm, kip·ft, BTU/h, rad/s…"
+    }
+    match units.read(text, unit: target) {
+        .ok(x) -> units.format(x, target, sig: 8, trim: true)
+        .failure(e) -> e.message
+    }
+}
+
+app Converter(title: "units", width: 720, height: 470) {
+    state text = "5' 6 1/4\""
+    state target = "mm"
+    state systemName = "SI kN-m"
+
+    VStack(spacing: 12, alignment: .leading) {
+        Text("Type a value with its units").font(size: 13).color(.secondary)
+        TextField("5' 6 1/4\", 120 pcf, 68 °F, 3 kN/m + 200 lbf/ft", text: text)
+            .font(size: 16)
+        Text(summary(text))
+            .font(size: 13)
+            .color(if readOk(text) { .secondary } else { .red })
+        HStack(spacing: 10) {
+            Picker(selection: systemName) {
+                for n in units.systemNames() {
+                    Text(n).tag(n)
+                }
+            }
+            Text(inSystem(text, systemName)).font(size: 15, weight: .semibold)
+            Spacer()
+        }
+        Divider()
+        HStack(spacing: 24, alignment: .top) {
+            VStack(spacing: 6, alignment: .leading) {
+                Text("In the usual units").font(size: 13, weight: .semibold)
+                if let q = units.readQuantity(text).value() {
+                    for row in rows(q) {
+                        HStack(spacing: 8) {
+                            Text(row.value).font(size: 14).frame(width: 150, alignment: .trailing)
+                            Text(row.unit).font(size: 14).color(.secondary)
+                        }
+                    }
+                }
+                Spacer()
+            }
+            .frame(width: 330)
+            VStack(spacing: 8, alignment: .leading) {
+                Text("In any unit").font(size: 13, weight: .semibold)
+                TextField("Unit", text: target).frame(width: 220)
+                Text(inTarget(text, target)).font(size: 15, weight: .semibold)
+                Spacer()
+            }
+            Spacer()
+        }
+    }
+    .padding(16)
+}

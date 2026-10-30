@@ -1,0 +1,274 @@
+// units: showing values. Numbers with a unit ("12.50 kN·m"), significant
+// figures, units written neatly ("kN*m/s^2" as "kN·m/s²"), a prefix that
+// reads well (0.0012 m as "1.2 mm"), and feet and inches (5' 6 1/4").
+//
+// Author: Alexius Academia
+// Date: 2026-10-30
+
+// formatNumber(x, decimals:)
+//   x with at most `decimals` decimals and no zeros at the end: 2.5, 300,
+//   0.125.
+public fn formatNumber(_ x: Float, decimals: Int = 4) -> String {
+    if !x.isFinite {
+        return "{x}"
+    }
+    var s = x.formatted(decimals: max(0, decimals))
+    if s.contains(".") {
+        while s.hasSuffix("0") {
+            s = s.substring(from: 0, to: s.count - 1)
+        }
+        if s.hasSuffix(".") {
+            s = s.substring(from: 0, to: s.count - 1)
+        }
+    }
+    if s == "-0" { "0" } else { s }
+}
+
+// How many decimals show `sig` significant figures of x.
+fn decimalsFor(_ x: Float, sig: Int) -> Int {
+    if x == 0.0 || !x.isFinite {
+        return max(0, sig - 1)
+    }
+    let magnitude = Int(floor(log10(abs(x))))
+    max(0, sig - 1 - magnitude)
+}
+
+// x with `sig` significant figures, as a number: 123456 to 3 is 123000.
+fn roundSignificant(_ x: Float, _ sig: Int) -> Float {
+    if x == 0.0 || !x.isFinite || sig <= 0 {
+        return x
+    }
+    let magnitude = floor(log10(abs(x)))
+    let scale = pow(10.0, Float(sig - 1) - magnitude)
+    round(x * scale) / scale
+}
+
+// The number part of format().
+fn numberText(_ x: Float, decimals: Int, sig: Int, trim: Bool) -> String {
+    if !x.isFinite {
+        return "{x}"
+    }
+    var s = ""
+    if sig > 0 {
+        let r = roundSignificant(x, sig)
+        s = r.formatted(decimals: decimalsFor(r, sig: sig))
+    } else {
+        s = x.formatted(decimals: max(0, decimals))
+    }
+    if trim {
+        s = formatNumber(Float(s) ?? x, decimals: 12)
+    }
+    if s.hasPrefix("-") && (Float(s) ?? 1.0) == 0.0 {
+        s = s.substring(from: 1, to: s.count)
+    }
+    s
+}
+
+// format(x, unit, decimals:, sig:, trim:)
+//   x with its unit, neatly written: format(12.5, "kN*m") is "12.50 kN·m".
+//   `decimals` digits after the point (2), or `sig` significant figures;
+//   `trim` drops zeros at the end. Units that are only symbols (%, °, ',
+//   ") go right after the number: "45°", "12%".
+public fn format(_ x: Float, _ unit: String, decimals: Int = 2, sig: Int = 0, trim: Bool = false) -> String {
+    let n = numberText(x, decimals: decimals, sig: sig, trim: trim)
+    let u = pretty(unit)
+    if u.isEmpty {
+        return n
+    }
+    if ["%", "°", "'", "\"", "‰", "′", "″"].contains(u) {
+        return n + u
+    }
+    "{n} {u}"
+}
+
+// pretty(unit)
+//   A unit written neatly: "kN*m/s^2" is "kN·m/s²", "kg m**-3" is
+//   "kg·m⁻³". Text that isn't a unit comes back as it is.
+public fn pretty(_ unit: String) -> String {
+    let trimmed = unit.trim()
+    if trimmed.isEmpty {
+        return ""
+    }
+    let (tokens, problem) = tokenize(trimmed)
+    if !problem.isEmpty {
+        return trimmed
+    }
+    var out = ""
+    var i = 0
+    var afterTerm = false
+    while i < tokens.count {
+        let t = tokens[i]
+        if t.kind == tokEnd {
+            break
+        }
+        if t.kind == tokName {
+            if afterTerm {
+                out += "·"
+            }
+            out += t.text
+            afterTerm = true
+        } else if t.kind == tokPower {
+            out += superscriptText(t.value)
+        } else if t.kind == tokNumber {
+            if afterTerm && !t.spaced && t.value == floor(t.value) {
+                // "m2": a power.
+                out += superscriptText(t.value)
+            } else {
+                if afterTerm {
+                    out += "·"
+                }
+                out += t.text
+                afterTerm = true
+            }
+        } else if t.text == "^" {
+            // ^2, ^-1, ^(1/2): superscripts for whole numbers.
+            var sign = 1.0
+            var k = i + 1
+            if k < tokens.count && tokens[k].kind == tokOp && tokens[k].text == "-" {
+                sign = -1.0
+                k += 1
+            }
+            if k < tokens.count && tokens[k].kind == tokNumber && tokens[k].value == floor(tokens[k].value) {
+                out += superscriptText(sign * tokens[k].value)
+                i = k + 1
+                continue
+            }
+            out += "^"
+            afterTerm = false
+        } else if t.text == "*" {
+            out += "·"
+            afterTerm = false
+        } else if t.text == "(" {
+            if afterTerm {
+                out += "·"
+            }
+            out += "("
+            afterTerm = false
+        } else if t.text == ")" {
+            out += ")"
+            afterTerm = true
+        } else {
+            out += t.text
+            afterTerm = false
+        }
+        i += 1
+    }
+    out
+}
+
+// The SI prefixes autoPrefix picks from, largest first.
+let engineeringPrefixes = ["Q", "R", "Y", "Z", "E", "P", "T", "G", "M", "k", "", "m", "µ", "n", "p", "f", "a", "z", "y", "r", "q"]
+
+fn prefixFactor(_ p: String) -> Float {
+    if p.isEmpty {
+        return 1.0
+    }
+    if let k = reg.prefixKeys.index(of: p) {
+        return reg.prefixFactors[k]
+    }
+    1.0
+}
+
+// The unit without its SI prefix, and the prefix: "kN" is ("N", "k"),
+// "mm" is ("m", "m"), "kg" is ("g", "k"), "ft" is ("ft", "").
+fn splitPrefix(_ unit: String) -> (String, String) {
+    if unit == "kg" {
+        return ("g", "k")
+    }
+    if exactUnit(unit) != nil {
+        return (unit, "")
+    }
+    for p in engineeringPrefixes {
+        if !p.isEmpty && unit.hasPrefix(p) {
+            let rest = unit.substring(from: p.count, to: unit.count)
+            if exactUnit(rest) != nil {
+                return (rest, p)
+            }
+        }
+    }
+    for p in ["u", "c", "d", "da", "h"] {
+        if unit.hasPrefix(p) {
+            let rest = unit.substring(from: p.count, to: unit.count)
+            if exactUnit(rest) != nil {
+                return (rest, p)
+            }
+        }
+    }
+    (unit, "")
+}
+
+// autoPrefix(x, unit, decimals:, sig:, trim:)
+//   x in a unit, shown with the SI prefix that puts the number between 1
+//   and 1000: autoPrefix(0.0012, "m") is "1.20 mm", autoPrefix(25000,
+//   "N") is "25.00 kN", autoPrefix(1500, "kN") is "1.50 MN". Units that
+//   don't take prefixes (ft, °C, %) are shown as they are.
+public fn autoPrefix(_ x: Float, _ unit: String, decimals: Int = 2, sig: Int = 0, trim: Bool = false) -> String {
+    let (base, prefix) = splitPrefix(unit.trim())
+    let baseUnit = exactUnit(base)
+    if baseUnit == nil || (baseUnit?.isOffset() ?? false) || (baseUnit?.isLog() ?? false) || x == 0.0 || !x.isFinite {
+        return format(x, unit, decimals: decimals, sig: sig, trim: trim)
+    }
+    // Only units that people write with SI prefixes.
+    let metric: Set<String> = ["m", "g", "s", "N", "Pa", "J", "W", "Hz", "V", "A", "Ω", "ohm", "F", "C", "H", "T",
+                               "Wb", "S", "L", "l", "mol", "cd", "lm", "lx", "Bq", "Gy", "Sv", "kat", "bit", "B",
+                               "eV", "Wh", "VA", "var", "t", "bar"]
+    if !metric.contains(base) {
+        return format(x, unit, decimals: decimals, sig: sig, trim: trim)
+    }
+    let v = x * prefixFactor(prefix)
+    var best = ""
+    for p in engineeringPrefixes {
+        let n = abs(v) / prefixFactor(p)
+        if n >= 1.0 {
+            best = p
+            break
+        }
+        best = p
+    }
+    // Rounding can make 999.999 into 1000.00: go up a prefix then.
+    var shown = v / prefixFactor(best)
+    let text = numberText(shown, decimals: decimals, sig: sig, trim: trim)
+    if abs(Float(text) ?? 0.0) >= 1000.0 {
+        if let k = engineeringPrefixes.index(of: best) {
+            if k > 0 {
+                best = engineeringPrefixes[k - 1]
+                shown = v / prefixFactor(best)
+            }
+        }
+    }
+    format(shown, best + base, decimals: decimals, sig: sig, trim: trim)
+}
+
+fn gcd(_ a0: Int, _ b0: Int) -> Int {
+    var a = abs(a0)
+    var b = abs(b0)
+    while b != 0 {
+        let t = a % b
+        a = b
+        b = t
+    }
+    if a == 0 { 1 } else { a }
+}
+
+// feetInches(x, unit:, denominator:)
+//   A length in feet and inches, to the nearest 1/denominator of an inch
+//   (16): feetInches(5.5208) is 5' 6 1/4". `unit` is x's unit ("ft"; also
+//   "m", "mm", "in"…). read() reads the text back.
+public fn feetInches(_ x: Float, unit: String = "ft", denominator: Int = 16) -> String {
+    let inchesTotal = convert(x, from: unit, to: "in").valueOr(x * 12.0)
+    let den = max(1, denominator)
+    var parts = Int(round(abs(inchesTotal) * Float(den)))
+    let sign = if inchesTotal < 0.0 && parts > 0 { "-" } else { "" }
+    let perFoot = 12 * den
+    let feet = parts / perFoot
+    parts -= feet * perFoot
+    let wholeInches = parts / den
+    let num = parts - wholeInches * den
+    var inchText = "{wholeInches}"
+    if num > 0 {
+        let g = gcd(num, den)
+        let frac = "{num / g}/{den / g}"
+        inchText = if wholeInches > 0 { "{wholeInches} {frac}" } else { frac }
+    }
+    "{sign}{feet}' {inchText}\""
+}
