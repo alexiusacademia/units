@@ -19,7 +19,9 @@ struct Row {
 // inches for a length.
 fn rows(_ q: units.Quantity) -> [Row] {
     var out: [Row] = []
-    var list = units.commonUnits(q.dimension())
+    // N·m is an energy and a moment; engineers mostly mean a moment.
+    let name = if q.dimension() == "energy" { "moment" } else { q.dimension() }
+    var list = units.commonUnits(name)
     if list.isEmpty {
         list = [units.siUnit(q.dims)]
     }

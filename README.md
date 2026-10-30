@@ -197,7 +197,7 @@ TESSEL=tessel sh tests/ui.sh
 ```
 
 The first checks the library against 14,229 cases with pint's answers
-(34,427 checks): every name in the table, 2,500 random prefixed and plural
+(34,431 checks): every name in the table, 2,500 random prefixed and plural
 names, 700 random strings that may or may not be names, 2,500 compound
 units written in different ways, 3,700 conversions (temperatures and dB
 among them), 2,350 typed sums and products, and 1,500 sums, products and

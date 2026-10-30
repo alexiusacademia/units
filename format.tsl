@@ -12,7 +12,14 @@ public fn formatNumber(_ x: Float, decimals: Int = 4) -> String {
     if !x.isFinite {
         return "{x}"
     }
-    var s = x.formatted(decimals: max(0, decimals))
+    let s = withoutTrailingZeros(x.formatted(decimals: max(0, decimals)))
+    if s == "-0" { "0" } else { s }
+}
+
+// A number's text without zeros after the point at the end: "2.50" is
+// "2.5", "300.00" is "300".
+fn withoutTrailingZeros(_ text: String) -> String {
+    var s = text
     if s.contains(".") {
         while s.hasSuffix("0") {
             s = s.substring(from: 0, to: s.count - 1)
@@ -21,7 +28,7 @@ public fn formatNumber(_ x: Float, decimals: Int = 4) -> String {
             s = s.substring(from: 0, to: s.count - 1)
         }
     }
-    if s == "-0" { "0" } else { s }
+    s
 }
 
 // How many decimals show `sig` significant figures of x.
@@ -56,7 +63,7 @@ fn numberText(_ x: Float, decimals: Int, sig: Int, trim: Bool) -> String {
         s = x.formatted(decimals: max(0, decimals))
     }
     if trim {
-        s = formatNumber(Float(s) ?? x, decimals: 12)
+        s = withoutTrailingZeros(s)
     }
     if s.hasPrefix("-") && (Float(s) ?? 1.0) == 0.0 {
         s = s.substring(from: 1, to: s.count)
