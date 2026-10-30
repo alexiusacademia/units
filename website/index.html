@@ -1,0 +1,332 @@
+<!doctype html>
+<!--
+  units' website: https://units-package.syncster.dev
+  Author: Alexius Academia
+  Date: 2026-10-30
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="author" content="Alexius Academia">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>units · Engineering units for Tessel</title>
+  <meta name="description" content="units is a Tessel library for engineering units: every unit pint knows plus engineering ones, conversions, checked quantities, reading typed values like 5' 6 1/4&quot; and 1 m + 50 mm, formatting and unit systems.">
+  <meta name="theme-color" content="#c2410c">
+  <link rel="canonical" href="https://units-package.syncster.dev/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="units">
+  <meta property="og:title" content="units · Engineering units for Tessel">
+  <meta property="og:description" content="Every unit pint knows plus engineering ones: conversions, quantities that check their dimensions, reading what's typed (5' 6 1/4&quot;, 3 kN/m + 200 lbf/ft), formatting and unit systems for Tessel apps.">
+  <meta property="og:url" content="https://units-package.syncster.dev/">
+  <meta property="og:image" content="https://units-package.syncster.dev/assets/share.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="A converter made with units: 5' 6 1/4&quot; in metres, millimetres, inches and feet">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#c2410c"/><rect x="6" y="18" width="20" height="7" rx="1.2" fill="#fff"/><path d="M10 18 V21.5 M14 18 V20.5 M18 18 V21.5 M22 18 V20.5" stroke="#c2410c" stroke-width="1.5"/><path d="M8 11.5 H23 M19.5 8 L23 11.5 L19.5 15" stroke="#fff" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+      units <small>for Tessel</small>
+    </a>
+    <nav>
+      <a href="#features">Features</a>
+      <a href="#reading" class="optional">Reading</a>
+      <a href="#reference">Reference</a>
+      <a href="https://github.com/alexiusacademia/units">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<div class="hero">
+  <div class="wrap">
+    <div>
+      <p class="eyebrow">A Tessel library</p>
+      <h1>Engineering units for Tessel apps.</h1>
+      <p class="lede">Every unit, prefix and dimension <a href="https://pint.readthedocs.io">pint</a> knows, plus the ones engineers use that it doesn't: psf, pcf, cfs, gpm, MGD and more. Convert numbers, read what people type, keep quantities whose sums check their dimensions, and switch a whole display from kN-m to kip-ft.</p>
+      <div class="install">
+        <code>tessel add units</code>
+        <button class="copy" type="button" data-copy="tessel add units">Copy</button>
+      </div>
+      <div class="buttons">
+        <a class="button primary" href="#features">See what it does</a>
+        <a class="button" href="https://github.com/alexiusacademia/units">Code on GitHub</a>
+      </div>
+      <p class="meta">MIT licence · Tessel 0.10 or later · no dependencies</p>
+    </div>
+    <figure class="shot">
+      <picture>
+        <source srcset="assets/app-dark.png" media="(prefers-color-scheme: dark)">
+        <img src="assets/app.png" width="1440" height="940" alt="The example converter: 5' 6 1/4&quot; typed in, shown as a length of 1.68275 m, 1682.75 mm, 66.25 in, 5.52083 ft and more, and as 66.25 in in the US kip-in system">
+      </picture>
+    </figure>
+  </div>
+</div>
+
+<section id="features">
+  <div class="wrap">
+    <h2>What it does</h2>
+    <p class="intro">Every picture here is the converter that comes with the library, run by Tessel without a window and saved.</p>
+
+    <div class="features2">
+
+      <article class="fcard">
+        <img src="assets/reading.png" width="1440" height="740" loading="lazy" alt="3 kN/m + 200 lbf/ft typed in: a force per length of 5.91878 kN/m, also shown in N/m, N/mm, lbf/ft, klf, lbf/in and kip/in">
+        <div class="body">
+          <h3>Reads what people type</h3>
+          <p>Feet and inches, fractions, sums of different units, and plain numbers in the field's own unit. The answer comes in the unit your field is in.</p>
+<pre class="tsl">let mm = try units.read("5' 6 1/4\"", unit: "mm")    // 1682.75
+let w = try units.read("3 kN/m + 200 lbf/ft", unit: "kN/m")</pre>
+        </div>
+      </article>
+
+      <article class="fcard">
+        <img src="assets/systems.png" width="1440" height="740" loading="lazy" alt="100 kN·m typed in and the US kip-ft system picked: 73.7562 kip·ft, with the moment also in N·m, kN·mm, lbf·ft and kip·in">
+        <div class="body">
+          <h3>Unit systems</h3>
+          <p>Six systems, from SI and kN-mm to US and kip-in, each with a unit for every dimension. Switch one and every value on screen follows. You can make your own.</p>
+<pre class="tsl">if let us = units.system("US kip-ft") {
+    print(us.showValue(100.0, "kN·m"))      // 73.76 kip·ft
+}</pre>
+        </div>
+      </article>
+
+      <article class="fcard">
+        <img src="assets/temps.png" width="1440" height="740" loading="lazy" alt="68 °F typed in: a temperature of 20 °C, 293.15 K, 68 °F and 527.67 °R">
+        <div class="body">
+          <h3>Temperatures and decibels</h3>
+          <p>°C, °F and °R convert with their own zeros, and dB, dBm and Np with their scales. Inside a unit like W/(m·°C), a degree is a difference, as in pint.</p>
+<pre class="tsl">units.convert(68.0, from: "°F", to: "°C")      // 20
+units.convert(10.0, from: "dBm", to: "mW")     // 10</pre>
+        </div>
+      </article>
+
+      <article class="fcard">
+        <img src="assets/errors.png" width="1440" height="740" loading="lazy" alt="3 kN typed in and mm asked for: the message reads mm is a length, not a force">
+        <div class="body">
+          <h3>Mistakes say what's wrong</h3>
+          <p>Every function that can fail returns a <code>Result</code> with a message to show: an unknown unit, two things that don't add up, a bracket that isn't closed.</p>
+<pre class="tsl">units.read("3 kN", unit: "mm")
+// fails: mm is a length, not a force</pre>
+        </div>
+      </article>
+
+    </div>
+  </div>
+</section>
+
+<section id="ways">
+  <div class="wrap">
+    <h2>In a program</h2>
+    <p class="intro">Keep plain <code>Float</code>s and convert where values come in and go out, or let <code>Quantity</code> values carry their dimension and check every sum.</p>
+    <div class="examples">
+      <article class="example">
+        <h3>Numbers and quantities</h3>
+        <p>Conversions give plain numbers. Quantities multiply into new dimensions: a length squared times a load per length is a moment.</p>
+<pre class="tsl">import units
+
+fn main() {
+    // Plain numbers in, plain numbers out.
+    let m = try units.convert(3.0, from: "ft", to: "m")             // 0.9144
+    let gamma = try units.convert(120.0, from: "pcf", to: "kN/m³")  // 18.85
+    // What people type into a field, in the field's unit.
+    let mm = try units.read("5' 6 1/4\"", unit: "mm")               // 1682.75
+    // Quantities that check their dimensions.
+    let span = try units.quantity(6.0, "m")
+    let load = try units.quantity(12.0, "kN/m")
+    let moment = span.power(2.0).times(load).scaled(1.0 / 8.0)      // w L² / 8
+    print(moment.show("kN·m"))                                      // 54.00 kN·m
+    print(units.feetInches(mm, unit: "mm"))                         // 5' 6 1/4"
+    if let us = units.system("US kip-ft") {
+        print(us.show(moment))                                      // 39.83 kip·ft
+    }
+}</pre>
+      </article>
+      <article class="example">
+        <h3>A number field</h3>
+        <p><code>read</code> gives the value in the field's unit, or a message to show beside the field. Formatting writes values back neatly.</p>
+<pre class="tsl">import units
+
+// What's typed in a number field, applied in the field's unit.
+fn apply(_ typed: String, _ fieldUnit: String) -> String {
+    match units.read(typed, unit: fieldUnit) {
+        .ok(x) -> units.format(x, fieldUnit, decimals: 1)
+        .failure(e) -> e.message
+    }
+}
+
+fn main() {
+    print(apply("20 ft", "mm"))                    // 6096.0 mm
+    print(apply("6 m + 250", "mm"))                // 6250.0 mm
+    print(apply("3 kg", "mm"))                     // mm is a length, not a mass
+    print(units.autoPrefix(0.0012, "m"))           // 1.20 mm
+    print(units.feetInches(1.0, unit: "m"))        // 3' 3 3/8"
+    print(units.dimension("kN/m³").valueOr(""))    // unit_weight
+}</pre>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section id="reading">
+  <div class="wrap">
+    <h2>Reading what's typed</h2>
+    <p class="intro"><code>read(text, unit:)</code> gives the value in the field's unit. A plain number is in that unit, also next to one with a unit.</p>
+    <div class="table"><table>
+      <tr><th>Typed</th><th>In a field in</th><th>Gives</th></tr>
+      <tr><td><code>2*3.5 + 1</code></td><td>anything</td><td>8</td></tr>
+      <tr><td><code>3 ft</code></td><td>mm</td><td>914.4</td></tr>
+      <tr><td><code>5'6"</code>, <code>5' 6"</code>, <code>5 ft 6 in</code></td><td>in</td><td>66</td></tr>
+      <tr><td><code>5' 6 1/4"</code></td><td>in</td><td>66.25</td></tr>
+      <tr><td><code>1/4 in</code>, <code>3/8"</code></td><td>in</td><td>0.25, 0.375</td></tr>
+      <tr><td><code>1 m + 50</code></td><td>mm</td><td>1050</td></tr>
+      <tr><td><code>10 kN / 2 m</code></td><td>kN/m</td><td>5</td></tr>
+      <tr><td><code>3 kN/m + 200 lbf/ft</code></td><td>kN/m</td><td>5.919</td></tr>
+      <tr><td><code>68 °F</code>, <code>-40 °C</code></td><td>°C</td><td>20, −40</td></tr>
+      <tr><td><code>10 dBm</code></td><td>mW</td><td>10</td></tr>
+      <tr><td><code>sqrt(16 m²)</code></td><td>m</td><td>4</td></tr>
+      <tr><td><code>asin(0.5)</code></td><td>deg</td><td>30</td></tr>
+      <tr><td><code>50 %</code></td><td>(none)</td><td>0.5</td></tr>
+    </table></div>
+    <p class="intro" style="margin-top:16px">Units are written with <code>·</code>, <code>*</code>, <code>×</code>, a space or <code>/</code>, and powers as <code>^2</code>, <code>**2</code>, <code>²</code> or <code>m2</code>: <code>kN·m</code>, <code>m^3/s</code>, <code>kg m**-3</code>, <code>W/(m·K)</code>. Functions: <code>sqrt abs round sin cos tan asin acos atan ln log exp</code> and <code>pi</code>; <code>sin</code>, <code>cos</code> and <code>tan</code> of a plain number take degrees, as in CAD programs.</p>
+  </div>
+</section>
+
+<section id="names">
+  <div class="wrap">
+    <h2>pint's names, and more</h2>
+    <p class="intro">The table is made from pint's own definitions, and names are found the way pint finds them: the name as it is, then a prefix and a name (<code>kft</code>, <code>µs</code>, <code>KiB</code>), then the same without an "s" on the end (<code>kips</code>, <code>meters</code>).</p>
+    <div class="table"><table>
+      <tr><th>units adds</th><th></th></tr>
+      <tr><td>An angle dimension</td><td><code>rpm</code> converts to <code>rad/s</code> and <code>deg/s</code>, but not to <code>Hz</code>: in pint it does, with a hidden 2π. A bit is a dimension too.</td></tr>
+      <tr><td>Engineering units</td><td><code>psf ksf tsf pcf kcf pci plf klf cfs cms lps lpm gpm gpd MGD MCM ha_m ac_ft inH2O meter_H2O fpm var ppb dozen</code>, and <code>'</code> and <code>"</code> for feet and inches. <code>pcf</code> is a unit weight: 120 pcf is 18.85 kN/m³.</td></tr>
+    </table></div>
+    <div class="table" style="margin-top:16px"><table>
+      <tr><th>pint's names that may surprise</th><th>Are</th></tr>
+      <tr><td><code>mil</code></td><td>1/64,000 of a turn; a thousandth of an inch is <code>thou</code></td></tr>
+      <tr><td><code>C</code>, <code>F</code></td><td>coulomb and farad; write <code>°C</code> or <code>degC</code>, <code>°F</code> or <code>degF</code></td></tr>
+      <tr><td><code>ton</code>, <code>gal</code></td><td>the short ton and the US gallon; <code>t</code> is a tonne</td></tr>
+      <tr><td><code>h</code></td><td>an hour</td></tr>
+    </table></div>
+  </div>
+</section>
+
+<section id="tested">
+  <div class="wrap">
+    <h2>Checked against pint</h2>
+    <p class="intro">A Python program asks pint for the answers to thousands of random cases: names, units written several ways, conversions, typed sums and quantity arithmetic. The library has to agree with every one.</p>
+    <div class="stats">
+      <div class="stat"><b>34,431</b><span>checks in the library's tests, all passing</span></div>
+      <div class="stat"><b>14,229</b><span>cases with pint's answers, from 4,179 names to 3,700 conversions</span></div>
+      <div class="stat"><b>440</b><span>units in the table, 1,014 names, any SI or binary prefix</span></div>
+      <div class="stat"><b>15</b><span>UI checks driving the converter headless</span></div>
+    </div>
+  </div>
+</section>
+
+<section id="reference">
+  <div class="wrap">
+    <h2>Reference</h2>
+
+    <h3>Units and converting</h3>
+    <div class="table"><table>
+      <tr><th>Function</th><th>Gives</th></tr>
+      <tr><td><code>convert(x, from:, to:)</code></td><td>x in another unit, temperatures and dB included.</td></tr>
+      <tr><td><code>factor(from:, to:)</code></td><td>What to multiply by (not for °C, °F or dB).</td></tr>
+      <tr><td><code>toSI(x, unit)</code>, <code>fromSI(v, unit)</code></td><td>A value in SI base units, and back.</td></tr>
+      <tr><td><code>unit(text)</code>, <code>isUnit(text)</code></td><td>A <code>Unit</code> (factor, dims, offset, log scale), and whether the text is one.</td></tr>
+      <tr><td><code>info(name)</code>, <code>allUnits()</code></td><td>A table unit's name, symbol, names, factor and dimension; all the names.</td></tr>
+    </table></div>
+
+    <h3>Reading and quantities</h3>
+    <div class="table"><table>
+      <tr><th>Function or method</th><th>Gives</th></tr>
+      <tr><td><code>read(text, unit:)</code></td><td>What's typed, as a number in the field's unit.</td></tr>
+      <tr><td><code>readQuantity(text)</code>, <code>quantity(x, unit)</code></td><td>A <code>Quantity</code>: a value in SI base units with its dimension.</td></tr>
+      <tr><td><code>q.to(unit)</code></td><td>The value in a unit that measures the same thing.</td></tr>
+      <tr><td><code>q.plus(r)</code>, <code>q.minus(r)</code></td><td>Sums that check the dimensions agree.</td></tr>
+      <tr><td><code>q.times(r)</code>, <code>q.over(r)</code>, <code>q.scaled(k)</code>, <code>q.power(p)</code>, <code>q.squareRoot()</code></td><td>Products, quotients and powers, in new dimensions.</td></tr>
+      <tr><td><code>q.dimension()</code>, <code>q.show(unit, decimals:, sig:, trim:)</code></td><td>What it measures, and text like "54.00 kN·m".</td></tr>
+    </table></div>
+
+    <h3>Writing values</h3>
+    <div class="table"><table>
+      <tr><th>Function</th><th>Gives</th></tr>
+      <tr><td><code>format(x, unit, decimals:, sig:, trim:)</code></td><td>"12.50 kN·m", or significant figures, or without zeros at the end.</td></tr>
+      <tr><td><code>pretty(unit)</code></td><td>"kg m**-3" written as "kg·m⁻³".</td></tr>
+      <tr><td><code>autoPrefix(x, unit, …)</code></td><td>The SI prefix that reads well: 0.0012 m is "1.20 mm".</td></tr>
+      <tr><td><code>feetInches(x, unit:, denominator:)</code></td><td>5' 6 1/4", to the nearest 1/16 inch; <code>read</code> reads it back.</td></tr>
+    </table></div>
+
+    <h3>Dimensions and systems</h3>
+    <div class="table"><table>
+      <tr><th>Function</th><th>Gives</th></tr>
+      <tr><td><code>dimension(unit)</code>, <code>dimensionNames(unit)</code></td><td>"unit_weight", "force_per_length", "angular_velocity"; all the names (kN·m is energy, moment, torque).</td></tr>
+      <tr><td><code>dimensionOf(name)</code>, <code>siUnit(dims)</code>, <code>sameDimension(a, b)</code></td><td>A dimension's powers, its SI unit ("kg·m⁻¹·s⁻²"), and whether two units convert.</td></tr>
+      <tr><td><code>unitsFor(dimension)</code>, <code>commonUnits(dimension)</code></td><td>Every unit of a dimension, and the usual few for a unit picker.</td></tr>
+      <tr><td><code>system(name)</code>, <code>systemNames()</code></td><td>SI, SI kN-m, SI kN-mm, US, US kip-ft and US kip-in.</td></tr>
+      <tr><td><code>s.unitForUnit(unit)</code>, <code>s.unitForDimension(name)</code>, <code>s.convert(x, from:)</code>, <code>s.show(q)</code>, <code>s.showValue(x, unit)</code></td><td>A system's unit for something, a value in it, and the value as text.</td></tr>
+    </table></div>
+    <p class="intro" style="margin-top:14px">The unit definitions come from pint, under its BSD licence; the library is MIT.</p>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>units · MIT licence · © 2026 <a href="https://syncster.dev" rel="author">Alexius Academia</a> · <a href="mailto:admin@syncster.dev">admin@syncster.dev</a> · <a href="https://syncster.dev">syncster.dev</a></span>
+    <nav>
+      <a href="https://github.com/alexiusacademia/units">GitHub</a>
+      <a href="https://tessel-lang.syncster.dev">Tessel</a>
+      <a href="https://tessel-packages.syncster.dev">Libraries</a>
+      <a href="https://inspector-package.syncster.dev">inspector</a>
+      <a href="https://viewport-package.syncster.dev">viewport</a>
+    </nav>
+  </div>
+</footer>
+
+<script>
+// Colours the Tessel code: keywords, strings, numbers and comments.
+(function () {
+  const esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const keywords = /^(import|fn|var|let|if|else|for|in|while|return|match|try|true|false|nil|app|state|struct)$/;
+  const token = /(\/\/[^\n]*)|("(?:\\.|[^"\\])*")|(\b\d+(?:\.\d+)?(?:e-?\d+)?\b)|([A-Za-z_]\w*)/g;
+  for (const pre of document.querySelectorAll("pre.tsl")) {
+    const text = pre.textContent;
+    let out = "", last = 0, m;
+    token.lastIndex = 0;
+    while ((m = token.exec(text))) {
+      out += esc(text.slice(last, m.index));
+      const t = esc(m[0]);
+      if (m[1]) out += '<span class="c">' + t + "</span>";
+      else if (m[2]) out += '<span class="s">' + t + "</span>";
+      else if (m[3]) out += '<span class="n">' + t + "</span>";
+      else if (keywords.test(m[4])) out += '<span class="k">' + t + "</span>";
+      else out += t;
+      last = token.lastIndex;
+    }
+    pre.innerHTML = out + esc(text.slice(last));
+  }
+  for (const b of document.querySelectorAll("[data-copy]")) {
+    b.addEventListener("click", () => {
+      navigator.clipboard.writeText(b.dataset.copy).then(() => {
+        b.textContent = "Copied";
+        setTimeout(() => { b.textContent = "Copy"; }, 1500);
+      }, () => {});
+    });
+  }
+})();
+</script>
+</body>
+</html>
